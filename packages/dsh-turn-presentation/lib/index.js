@@ -5,6 +5,7 @@ export const name = "stardust-turn-presentation";
 const turnSchema = z.object({
   turnId: z.string().min(1),
   status: z.enum(["running", "settled", "interrupted"]),
+  originKey: z.string().min(1).optional(),
   nodeKeys: z.array(z.string().min(1)),
   interruptKeys: z.array(z.string().min(1)).optional(),
   finalReplyFrom: z.string().min(1).optional(),
@@ -121,6 +122,57 @@ function addInterruptNode(turn, key, anchorSeq) {
   return { ...next, interruptKeys: [...interruptKeys, key] };
 }
 
+function setOriginKey(turn, originKey) {
+  if (typeof originKey !== "string" || originKey === "") return turn;
+  if (turn.originKey === originKey) return turn;
+  return { ...turn, originKey };
+}
+
+function generatedActivityKey(key) {
+  return typeof key === "string"
+    && (key.includes(":assistant-step") || key.includes(":tool-call") || key.includes(":model-retry"));
+}
+
+function turnHasGeneratedActivity(turn) {
+  return turn !== undefined
+    && Array.isArray(turn.nodes)
+    && turn.nodes.some(node => generatedActivityKey(node.key));
+}
+
+function pushPendingTurnNode(state, key, anchorSeq) {
+  const pendingTurnNodes = Array.isArray(state.pendingTurnNodes) ? state.pendingTurnNodes : [];
+  if (pendingTurnNodes.some(node => node.key === key)) return state;
+  return {
+    ...state,
+    pendingTurnNodes: [...pendingTurnNodes, { key, anchorSeq }],
+  };
+}
+
+function attachPendingNodes(turn, pendingTurnNodes, afterSeq) {
+  let next = turn;
+  let index = 0;
+  for (const node of pendingTurnNodes) {
+    index += 1;
+    const anchorSeq = Number.isFinite(afterSeq) ? Math.max(node.anchorSeq, afterSeq + index / 1024) : node.anchorSeq;
+    next = addNode(next, node.key, anchorSeq);
+  }
+  return next;
+}
+
+function isHumanUserMessage(event) {
+  const source = event?.data?.source;
+  if (source === "user") return true;
+  return source !== null && typeof source === "object" && source.kind === "user";
+}
+
+function isClearedSystemPromptMessage(event) {
+  const source = event?.data?.source;
+  return source !== null
+    && typeof source === "object"
+    && source.plugin === "@deepseek-ai/dsh-system-prompt"
+    && source.form === "cleared";
+}
+
 function updateStep(turn, stepNumber, update) {
   const stepId = String(stepNumber);
   const index = turn.steps.findIndex(step => step.stepId === stepId);
@@ -184,6 +236,7 @@ function settleTurn(turn, event) {
 function claimPendingTurn(state, turnNumber, turn) {
   if (!state.awaitingTurnStart) return { state, turn };
   let nextTurn = turn;
+  nextTurn = setOriginKey(nextTurn, state.branchOriginKey);
   const pendingTurnNodes = Array.isArray(state.pendingTurnNodes) ? state.pendingTurnNodes : [];
   for (const node of pendingTurnNodes) nextTurn = addNode(nextTurn, node.key, node.anchorSeq);
   return {
@@ -211,7 +264,7 @@ export function createTurnPresentationState() {
 export function applyTurnPresentation(state, event) {
   if (event === null || typeof event !== "object") return state;
   if (event.type === "session/end-seed") {
-    const { activeTurn: _activeTurn, ...rest } = state;
+    const { activeTurn: _activeTurn, branchOriginKey: _branchOriginKey, ...rest } = state;
     return {
       ...rest,
       awaitingBranchUser: true,
@@ -219,33 +272,44 @@ export function applyTurnPresentation(state, event) {
       pendingTurnNodes: [],
     };
   }
-  if (event.type === "user/message" && event.data?.source?.kind === "user") {
+  if (event.type === "user/message" && isHumanUserMessage(event)) {
     if (!state.awaitingBranchUser && state.branchId !== "unbound") {
-      if (!Number.isSafeInteger(state.activeTurn)) return state;
-      const id = typeof event.data.id === "string" && event.data.id !== "" ? event.data.id : String(event.seq);
-      const ensured = ensureTurn(state, state.activeTurn, event.time);
-      const turn = addInterruptNode(ensured.state.turns[ensured.index], inputMessageKey(id), event.seq);
-      return replaceTurn(ensured.state, ensured.index, turn);
+      if (Number.isSafeInteger(state.activeTurn)) {
+        const ensured = ensureTurn(state, state.activeTurn, event.time);
+        if (turnHasGeneratedActivity(ensured.state.turns[ensured.index])) {
+          const id = typeof event.data.id === "string" && event.data.id !== "" ? event.data.id : String(event.seq);
+          const turn = addInterruptNode(ensured.state.turns[ensured.index], inputMessageKey(id), event.seq);
+          return replaceTurn(ensured.state, ensured.index, turn);
+        }
+      }
     }
     const id = typeof event.data.id === "string" && event.data.id !== "" ? event.data.id : String(event.seq);
     const { activeTurn: _activeTurn, ...rest } = state;
     const branchId = `message:${id}`;
+    const originKey = inputMessageKey(id);
     const activeTurn = Number.isSafeInteger(state.activeTurn) ? state.activeTurn : undefined;
+    const pendingTurnNodes = Array.isArray(state.pendingTurnNodes) ? state.pendingTurnNodes : [];
+    const turns = state.turns.map(turn => {
+      if (activeTurn === undefined || !turn.turnId.endsWith(`:${activeTurn}`) || turn.status !== "running") return turn;
+      let nextTurn = setOriginKey({ ...turn, turnId: `${branchId}:${activeTurn}` }, originKey);
+      if (pendingTurnNodes.length > 0) nextTurn = attachPendingNodes(nextTurn, pendingTurnNodes, event.seq);
+      return nextTurn;
+    });
     return {
       ...rest,
       branchId,
+      branchOriginKey: originKey,
       awaitingBranchUser: false,
       awaitingTurnStart: activeTurn === undefined,
       ...(activeTurn === undefined ? {} : { activeTurn }),
-      pendingTurnNodes: [],
-      turns: state.turns.map(turn => activeTurn !== undefined && turn.turnId.endsWith(`:${activeTurn}`) && turn.status === "running"
-        ? { ...turn, turnId: `${branchId}:${activeTurn}` }
-        : turn),
+      pendingTurnNodes: activeTurn === undefined ? pendingTurnNodes : [],
+      turns,
     };
   }
-  if (event.type === "user/message" && ["plugin", "skill-catalog"].includes(event.data?.source?.kind)) {
-    if (event.data.source.plugin === "@deepseek-ai/dsh-system-prompt" && event.data.source.form === "cleared") return state;
+  if (event.type === "user/message") {
+    if (isClearedSystemPromptMessage(event)) return state;
     const messageId = typeof event.data.id === "string" && event.data.id !== "" ? event.data.id : String(event.seq);
+    if (state.awaitingBranchUser) return pushPendingTurnNode(state, inputMessageKey(messageId), event.seq);
     if (!Number.isSafeInteger(state.activeTurn)) {
       if (!state.awaitingTurnStart) {
         const lastIndex = state.turns.length - 1;
@@ -254,12 +318,7 @@ export function applyTurnPresentation(state, event) {
         if (!lastTurn.turnId.startsWith(`${state.branchId}:`)) return state;
         return replaceTurn(state, lastIndex, addNode(lastTurn, inputMessageKey(messageId), event.seq));
       }
-      const pendingTurnNodes = Array.isArray(state.pendingTurnNodes) ? state.pendingTurnNodes : [];
-      if (pendingTurnNodes.some(node => node.key === inputMessageKey(messageId))) return state;
-      return {
-        ...state,
-        pendingTurnNodes: [...pendingTurnNodes, { key: inputMessageKey(messageId), anchorSeq: event.seq }],
-      };
+      return pushPendingTurnNode(state, inputMessageKey(messageId), event.seq);
     }
     const ensured = ensureTurn(state, state.activeTurn, event.time);
     const turn = addNode(ensured.state.turns[ensured.index], inputMessageKey(messageId), event.seq);
@@ -327,6 +386,7 @@ export function viewTurnPresentation(state) {
     turns: state.turns.map(turn => ({
       turnId: turn.turnId,
       status: turn.status,
+      ...(typeof turn.originKey === "string" ? { originKey: turn.originKey } : {}),
       nodeKeys: turn.nodes
         .slice()
         .sort((left, right) => left.anchorSeq - right.anchorSeq || left.key.localeCompare(right.key))
@@ -345,7 +405,7 @@ export const turnPresentationProjectionDefinition = {
   init: createTurnPresentationState,
   apply: applyTurnPresentation,
   view: viewTurnPresentation,
-  stateVersion: 8,
+  stateVersion: 10,
 };
 
 export function apply(ctx) {

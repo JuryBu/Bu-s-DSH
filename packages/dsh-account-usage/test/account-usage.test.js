@@ -144,7 +144,7 @@ test("authentication failures are distinguished without exposing server text", a
   assert.equal(JSON.stringify(snapshot).includes("secret server detail"), false);
 });
 
-test("snapshots cache for 60 seconds and forced refreshes deduplicate for 30 seconds", async () => {
+test("snapshots cache for 60 seconds and forced refresh bypasses cached snapshots", async () => {
   let calls = 0;
   const { service, advance } = createService({
     fetcher: async () => {
@@ -161,7 +161,7 @@ test("snapshots cache for 60 seconds and forced refreshes deduplicate for 30 sec
   assert.equal(calls, 2);
   advance(ACCOUNT_USAGE_REQUEST_DEDUP_MS - 1);
   await service.getSnapshot("deepseek-api-key", { forceRefresh: true });
-  assert.equal(calls, 2);
+  assert.equal(calls, 3);
 });
 
 test("concurrent reads share one in-flight request", async () => {

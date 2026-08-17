@@ -240,13 +240,13 @@ function stardustSelectionForFamily(family, requested = {}) {
  * 引用同一份文本，预览即实现。
  *
  * 关键点：把上游 `.menu`（`position:absolute`）在被包进 `.dsh-ms-wrap` 时改成静态
- * 定位，这样父菜单与侧开子菜单是同一条 flex 行，不需要手算溢出；窄窗口下
- * `flex-wrap:wrap-reverse` 会自动把子菜单换到上一行，不会飞出视口。
+ * 定位；外层固定到 viewport 并由组件按触发器位置钳制 top/left，避免初始页输入框
+ * 太靠底部时把子菜单顶到屏幕外。
  */
 export const MODEL_MENU_STYLE = `
-.dsh-ms-wrap{position:absolute;z-index:20;bottom:calc(100% + 8px);right:0;display:flex;flex-direction:row-reverse;align-items:flex-end;align-content:flex-end;justify-content:flex-end;flex-wrap:wrap-reverse;gap:6px;max-width:calc(100vw - 24px)}
-.dsh-ms-panel{position:static!important;bottom:auto!important;right:auto!important;flex:none;max-height:min(468px,100vh - 72px);overflow-y:auto}
-.dsh-ms-sub{width:min(268px,calc(100vw - 32px));overflow-y:auto}
+.dsh-ms-wrap{position:fixed;z-index:1000;left:var(--dsh-ms-left,8px);top:var(--dsh-ms-top,8px);bottom:auto!important;right:auto!important;display:flex;flex-direction:row-reverse;align-items:flex-start;align-content:flex-start;justify-content:flex-end;flex-wrap:nowrap;gap:6px;max-width:calc(100vw - 16px);max-height:var(--dsh-ms-max-height,calc(100vh - 16px));overflow:visible}
+.dsh-ms-panel{position:static!important;bottom:auto!important;right:auto!important;flex:none;max-height:var(--dsh-ms-root-max-height,var(--dsh-ms-max-height,min(468px,100vh - 72px)));overflow-y:auto}
+.dsh-ms-sub{width:min(268px,calc(100vw - 32px));max-height:var(--dsh-ms-sub-max-height,min(420px,100vh - 72px));overflow-y:auto}
 .dsh-ms-subhead{padding:6px 10px 4px;color:var(--dsw-alias-label-tertiary);font-size:12px;line-height:18px}
 .dsh-ms-cell-open{background:var(--dsw-alias-interactive-bg-hover)}
 .dsh-ms-adv{margin-top:2px;border-top:1px solid var(--dsw-alias-border-l2);padding-top:2px}
@@ -327,7 +327,9 @@ export const MODEL_SELECT_BROWSER_SOURCE = `\n\t\tconst STARDUST_MODEL_MENU_CSS 
 			const toastSeq = (0, react.useRef)(0);
 			const rootRef = (0, react.useRef)(null);
 			const triggerRef = (0, react.useRef)(null);
+			const wrapRef = (0, react.useRef)(null);
 			const [advanced, setAdvanced] = (0, react.useState)(false);
+			const [menuBox, setMenuBox] = (0, react.useState)(null);
 			const id = (0, react.useId)();
 			const facetGroups = (0, react.useMemo)(() => stardustFacetGroups(state.groups).filter((group) => providerAuth[group.id] !== false), [state.groups, providerAuth]);
 			const displayedCurrent = open && draftSelection !== null ? draftSelection : state.current;
@@ -377,6 +379,56 @@ export const MODEL_SELECT_BROWSER_SOURCE = `\n\t\tconst STARDUST_MODEL_MENU_CSS 
 				document.addEventListener("mousedown", closeOutside);
 				return () => document.removeEventListener("mousedown", closeOutside);
 			}, [open]);
+			(0, react.useLayoutEffect)(() => {
+				if (!open) {
+					setMenuBox(null);
+					return;
+				}
+				let frame = 0;
+				const update = () => {
+					const anchor = triggerRef.current?.getBoundingClientRect();
+					const wrap = wrapRef.current;
+					if (anchor === void 0 || wrap === null) return;
+					const margin = 8;
+					const viewportWidth = Math.max(window.innerWidth || 0, 320);
+					const viewportHeight = Math.max(window.innerHeight || 0, 320);
+					const maxWidth = Math.max(240, viewportWidth - margin * 2);
+					const rootPanel = wrap.querySelector(".dsh-ms-panel:not(.dsh-ms-sub)") ?? wrap;
+					const wrapRect = wrap.getBoundingClientRect();
+					const rootRect = rootPanel.getBoundingClientRect();
+					const measuredWidth = Math.min(Math.ceil(wrap.offsetWidth || wrapRect.width || 280), maxWidth);
+					const maxHeight = Math.max(180, viewportHeight - margin * 2);
+					const rootMaxHeight = Math.min(468, maxHeight);
+					const subMaxHeight = Math.min(420, maxHeight);
+					const measuredHeight = Math.min(Math.ceil(rootPanel.scrollHeight || rootRect.height || 320), rootMaxHeight);
+					const left = Math.min(Math.max(margin, Math.round(anchor.right - measuredWidth)), viewportWidth - measuredWidth - margin);
+					const preferredTop = Math.round(anchor.top - measuredHeight - margin);
+					const fallbackTop = Math.round(anchor.bottom + margin);
+					const top = preferredTop >= margin
+						? preferredTop
+						: Math.min(Math.max(margin, fallbackTop), viewportHeight - measuredHeight - margin);
+					setMenuBox({
+						left: Math.max(margin, left),
+						top: Math.max(margin, top),
+						maxHeight,
+						rootMaxHeight,
+						subMaxHeight
+					});
+				};
+				const schedule = () => {
+					cancelAnimationFrame(frame);
+					frame = requestAnimationFrame(update);
+				};
+				update();
+				frame = requestAnimationFrame(update);
+				window.addEventListener("resize", schedule);
+				window.addEventListener("scroll", schedule, true);
+				return () => {
+					cancelAnimationFrame(frame);
+					window.removeEventListener("resize", schedule);
+					window.removeEventListener("scroll", schedule, true);
+				};
+			}, [open, pane, advanced, facetGroups.length, effortChoices.length, speedChoices.length, contextChoices.length]);
 			if (!available) return null;
 			const close = (restoreFocus = false) => {
 				setOpen(false);
@@ -455,6 +507,13 @@ export const MODEL_SELECT_BROWSER_SOURCE = `\n\t\tconst STARDUST_MODEL_MENU_CSS 
 			);
 			const triggerDetail = [contextChoices.length > 1 ? contextLabel : void 0, effectiveEffort === void 0 ? void 0 : effortLabel, effectiveSpeed === STARDUST_FAST_SPEED ? speedLabel : void 0].filter(Boolean).join(" · ");
 			const triggerLabel = triggerDetail ? modelLabel + " · " + triggerDetail : modelLabel;
+			const menuStyle = menuBox === null ? void 0 : {
+				"--dsh-ms-left": menuBox.left + "px",
+				"--dsh-ms-top": menuBox.top + "px",
+				"--dsh-ms-max-height": menuBox.maxHeight + "px",
+				"--dsh-ms-root-max-height": menuBox.rootMaxHeight + "px",
+				"--dsh-ms-sub-max-height": menuBox.subMaxHeight + "px"
+			};
 			const rootCell = (label, value, target) => (0, react_jsx_runtime.jsxs)("button", {
 				key: target,
 				type: "button",
@@ -583,7 +642,9 @@ export const MODEL_SELECT_BROWSER_SOURCE = `\n\t\tconst STARDUST_MODEL_MENU_CSS 
 						]
 					}),
 					open && (0, react_jsx_runtime.jsxs)("div", {
+						ref: wrapRef,
 						className: "dsh-ms-wrap",
+						style: menuStyle,
 						children: [
 						(0, react_jsx_runtime.jsxs)("div", {
 						id: id + "-menu",

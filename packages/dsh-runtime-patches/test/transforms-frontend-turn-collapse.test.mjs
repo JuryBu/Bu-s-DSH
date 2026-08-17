@@ -275,6 +275,35 @@ test("轮级流保留过程区内部的 G1 活动分组，并让正文保持展�
   assert.deepEqual(result[1].replyItems, [{ type: "seat", key: "reply" }]);
 });
 
+test("originKey 存在时折叠块锚定到真人消息后，前置注入不再抢占位置", () => {
+  const controller = turnCollapseController({
+    version: 1,
+    branchId: "b1",
+    turns: [settledTurn({
+      originKey: "human",
+      nodeKeys: ["inject-before-human", "inject-after-human", "reply"],
+      finalReplyFrom: "reply",
+    })],
+  }, "backend");
+  const result = buildTurnFlowItems(
+    ["inject-before-human", "human", "inject-after-human", "reply"],
+    [
+      { type: "seat", key: "inject-before-human" },
+      { type: "seat", key: "human" },
+      { type: "seat", key: "inject-after-human" },
+      { type: "seat", key: "reply" },
+    ],
+    controller,
+  );
+  assert.deepEqual(result.map(item => item.type), ["seat", "turn"]);
+  assert.equal(result[0].key, "human");
+  assert.deepEqual(result[1].processItems, [
+    { type: "seat", key: "inject-before-human" },
+    { type: "seat", key: "inject-after-human" },
+  ]);
+  assert.deepEqual(result[1].replyItems, [{ type: "seat", key: "reply" }]);
+});
+
 test("运行中真人消息既保留原始展开顺序，也提供折叠态固定副本", () => {
   const controller = turnCollapseController({
     version: 1,

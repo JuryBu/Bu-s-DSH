@@ -49,6 +49,7 @@ test("正常工具轮只在 turn/end 后标出最终正文边界", () => {
   assert.deepEqual(projection.turns[0], {
     turnId: "message:human-1:7",
     status: "settled",
+    originKey: conversationContextKey("input-message", "human-1"),
     nodeKeys: [
       conversationContextKey("assistant-step", "7:1"),
       conversationContextKey("tool-call", "call-1"),
@@ -131,6 +132,129 @@ test("运行中到达的第二条真人消息固定在过程结束线下方且�
     conversationContextKey("input-message", "human-interrupt"),
   ]);
   assert.equal(projection.turns[0].finalReplyFrom, conversationContextKey("assistant-step", "12:2"));
+});
+
+test("下一轮 turn/start 先于真人消息时不把真人消息当成 interrupt", () => {
+  const projection = viewTurnPresentation(fold([
+    event("user/message", 1, 900, { id: "human-first", source: { kind: "user" } }),
+    event("turn/start", 2, 1000, { turn: 1 }),
+    event("step/start", 3, 1010, { turn: 1, step: 1 }),
+    event("assistant/message", 4, 1020, {
+      turn: 1,
+      step: 1,
+      message: { content: [{ type: "text", text: "上一轮完成" }] },
+    }),
+    event("turn/end", 5, 1030, { turn: 1, reason: { kind: "completed" } }),
+    event("turn/start", 6, 1040, { turn: 2 }),
+    event("step/start", 7, 1050, { turn: 2, step: 1 }),
+    event("user/message", 8, 1060, {
+      id: "human-second",
+      source: { kind: "user" },
+      content: [{ type: "text", text: "下一轮真人消息" }],
+    }),
+    event("assistant/message", 9, 1070, {
+      turn: 2,
+      step: 1,
+      message: { content: [{ type: "text", text: "下一轮答复" }] },
+    }),
+    event("turn/end", 10, 1080, { turn: 2, reason: { kind: "completed" } }),
+  ]));
+  assert.deepEqual(projection.turns.map(turn => turn.turnId), [
+    "message:human-first:1",
+    "message:human-second:2",
+  ]);
+  assert.deepEqual(projection.turns[1].nodeKeys, [
+    conversationContextKey("assistant-step", "2:1"),
+  ]);
+  assert.equal(projection.turns[1].interruptKeys, undefined);
+  assert.equal(projection.turns[1].finalReplyFrom, conversationContextKey("assistant-step", "2:1"));
+});
+
+test("seed 后插件与 skill-catalog 先于真人消息时进入新轮待领节点", () => {
+  const projection = viewTurnPresentation(fold([
+    event("user/message", 1, 900, { id: "old-human", source: { kind: "user" } }),
+    event("turn/start", 2, 1000, { turn: 1 }),
+    event("step/start", 3, 1010, { turn: 1, step: 1 }),
+    event("assistant/message", 4, 1020, {
+      turn: 1,
+      step: 1,
+      message: { content: [{ type: "text", text: "旧轮完成" }] },
+    }),
+    event("turn/end", 5, 1030, { turn: 1, reason: { kind: "completed" } }),
+    event("session/end-seed", 6, 1040),
+    event("turn/start", 7, 1050, { turn: 2 }),
+    event("step/start", 8, 1060, { turn: 2, step: 1 }),
+    event("user/message", 9, 1070, {
+      id: "runtime-context-before-human",
+      source: { kind: "plugin", plugin: "@deepseek-ai/dsh-system-prompt", form: "snapshot" },
+    }),
+    event("user/message", 10, 1080, {
+      id: "skill-catalog-before-human",
+      source: { kind: "skill-catalog", form: "catalog" },
+    }),
+    event("user/message", 11, 1090, {
+      id: "new-human",
+      source: { kind: "user" },
+      content: [{ type: "text", text: "新轮真人消息" }],
+    }),
+    event("assistant/message", 12, 1100, {
+      turn: 2,
+      step: 1,
+      message: { content: [{ type: "text", text: "新轮答复" }] },
+    }),
+  ]));
+  assert.deepEqual(projection.turns[0].nodeKeys, [
+    conversationContextKey("assistant-step", "1:1"),
+  ]);
+  assert.deepEqual(projection.turns[1].nodeKeys, [
+    conversationContextKey("input-message", "runtime-context-before-human"),
+    conversationContextKey("input-message", "skill-catalog-before-human"),
+    conversationContextKey("assistant-step", "2:1"),
+  ]);
+  assert.equal(projection.turns[1].originKey, conversationContextKey("input-message", "new-human"));
+  assert.equal(projection.turns[1].interruptKeys, undefined);
+});
+
+test("turn/start 后非真人注入先于真人消息时不把折叠锚点提前到真人消息前", () => {
+  const state = fold([
+    event("session/end-seed", 1, 900),
+    event("turn/start", 2, 1000, { turn: 1 }),
+    event("step/start", 3, 1010, { turn: 1, step: 1 }),
+    event("user/message", 4, 1015, {
+      id: "approval-before-human",
+      source: { kind: "plugin", plugin: "user-approval" },
+      content: [{ type: "text", text: "approval" }],
+    }),
+    event("user/message", 5, 1020, {
+      id: "human-after-approval",
+      source: "user",
+      content: [{ type: "text", text: "你目前能看到多少工具可以用" }],
+    }),
+    event("user/message", 6, 1030, {
+      id: "runtime-after-human",
+      source: { kind: "plugin", plugin: "@deepseek-ai/dsh-system-prompt", form: "snapshot" },
+    }),
+    event("user/message", 7, 1040, {
+      id: "skills-after-human",
+      source: { kind: "skill-catalog", form: "catalog" },
+    }),
+    event("assistant/message", 8, 1100, {
+      turn: 1,
+      step: 1,
+      message: { content: [{ type: "text", text: "答复" }] },
+    }),
+    event("turn/end", 9, 1110, { turn: 1, reason: { kind: "completed" } }),
+  ]);
+  const projection = viewTurnPresentation(state);
+  assert.equal(projection.branchId, "message:human-after-approval");
+  assert.equal(projection.turns.length, 1);
+  const turn = projection.turns[0];
+  assert.equal(turn.turnId, "message:human-after-approval:1");
+  assert.equal(turn.originKey, conversationContextKey("input-message", "human-after-approval"));
+  const internalTurn = state.turns[0];
+  const approvalNode = internalTurn.nodes.find(node => node.key === conversationContextKey("input-message", "approval-before-human"));
+  assert.ok(approvalNode, "真人消息前的非真人注入仍应归入本轮折叠");
+  assert.ok(approvalNode.anchorSeq > 5, "非真人注入在展示锚点上必须排到真人消息之后");
 });
 
 test("turn 已开始但真人消息后才到达的首条上下文注入仍归入本轮过程", () => {

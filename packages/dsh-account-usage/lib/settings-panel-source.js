@@ -73,6 +73,17 @@ const HELPERS = String.raw`
 			quota_fields_unavailable: "已连接，本次接口未返回额度字段"
 		};
 		const ACCOUNT_USAGE_CURRENCY = { CNY: "¥", USD: "$" };
+		const ACCOUNT_USAGE_PLAN_LABELS = new Map([
+			["free", "Free"],
+			["go", "Go"],
+			["plus", "Plus"],
+			["pro", "Pro"],
+			["team", "Team"],
+			["enterprise", "Enterprise"],
+			["max", "Max"],
+			["ultra", "Ultra"],
+			["student", "Student"]
+		]);
 		async function accountUsageRequest(providerId, forceRefresh = false) {
 			const response = await fetch("/account-usage/" + providerId + (forceRefresh ? "?refresh=1" : ""), {
 				method: "GET",
@@ -243,7 +254,7 @@ const HELPERS = String.raw`
 		}
 		function accountUsagePlanTag(snapshot) {
 			const planName = snapshot?.quota?.planName;
-			if (typeof planName === "string" && planName.length > 0) return { text: planName, muted: false };
+			if (typeof planName === "string" && planName.trim().length > 0) return { text: ACCOUNT_USAGE_PLAN_LABELS.get(planName.trim().toLowerCase()) ?? planName.trim(), muted: false };
 			if (snapshot === void 0) return { text: "读取中", muted: true };
 			if (snapshot.connection === "connected") return { text: "已连接", muted: true };
 			if (snapshot.connection === "disconnected") return { text: "未连接", muted: true };
@@ -316,7 +327,7 @@ const HELPERS = String.raw`
 				}));
 				const results = await Promise.all(ACCOUNT_USAGE_PROVIDERS.map(async (provider) => {
 					try {
-						return [provider.id, { snapshot: await accountUsageRequest(provider.id) }];
+						return [provider.id, { snapshot: await accountUsageRequest(provider.id, forceRefresh) }];
 					} catch (error) {
 						return [provider.id, { error: error instanceof Error ? error.message : String(error) }];
 					}

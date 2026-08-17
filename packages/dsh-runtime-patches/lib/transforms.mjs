@@ -7,6 +7,7 @@ import {
   patchActivityTrackFrontendSource,
   patchContextStatusCardSource,
   patchEditResendShellSource,
+  patchSelectionAnnotationSource,
   patchTurnProcessCollapseSource,
   patchWorkspaceConversationReferencesSource,
 } from "./transforms-frontend.mjs";
@@ -2184,7 +2185,9 @@ export function patchConversationUiSource(source) {
     patchTurnProcessCollapseSource(
       patchContextStatusCardSource(
         patchActivityTrackFrontendSource(
-          patchConversationActivityPresentationSource(patchContextMeterThresholdsSource(source)),
+          patchSelectionAnnotationSource(
+            patchConversationActivityPresentationSource(patchContextMeterThresholdsSource(source)),
+          ),
         ),
       ),
     ),

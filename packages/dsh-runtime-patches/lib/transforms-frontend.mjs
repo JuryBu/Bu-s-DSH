@@ -241,12 +241,13 @@ export const ACTIVITY_TRACK_CSS = [
   '[data-think-body]>*{white-space:normal}',
   '[data-think-body] p,[data-think-body] ul,[data-think-body] ol,[data-think-body] blockquote{margin:0 0 8px}',
   '[data-think-body] p:last-child,[data-think-body] ul:last-child,[data-think-body] ol:last-child{margin-bottom:0}',
+  '[data-variant="think"] [data-think-body]{max-height:360px;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;scrollbar-gutter:stable}',
   '[data-variant="think"] [data-activity-duration]{margin-left:auto!important}',
   '[data-chat-flow] [data-activity-duration],[data-chat-flow] [data-tool-activity-duration]{flex:none}',
   '[data-variant="think"][data-state="running"] [data-think-summary]{display:none}',
   '[data-variant="think"][data-state="running"] [data-disclosure-row]>span:nth-child(3){display:none}',
   '[data-variant="think"][data-state="running"] [data-disclosure-row]>span:nth-child(2){color:var(--dsw-static-deepseek-500)}',
-  '[data-variant="think"][data-state="running"] [data-think-body]{position:relative;display:flex;flex-direction:column;justify-content:flex-end;max-height:252px;overflow:hidden}',
+  '[data-variant="think"][data-state="running"] [data-think-body]{position:relative;display:flex;flex-direction:column;justify-content:flex-end;max-height:252px;overflow-y:auto;overflow-x:hidden}',
   '[data-variant="think"][data-state="running"] [data-think-body]:before{content:"";position:absolute;inset:0 0 auto 0;height:62px;pointer-events:none;z-index:1;background:linear-gradient(180deg,var(--dsw-alias-bg-base) 8%,color-mix(in srgb,var(--dsw-alias-bg-base) 55%,transparent) 56%,transparent 100%)}',
   '.dsh-a-group{display:flex;flex-direction:column;min-width:0}',
   '.dsh-a-ghead{display:grid;grid-template-columns:var(--dsh-a-lead) minmax(0,1fr) auto;align-items:center;column-gap:0;padding:2px 6px;margin-left:-6px;border-radius:6px}',
@@ -458,6 +459,861 @@ export function patchActivityTrackFrontendSource(source) {
     "运行中思考自动开窗",
   );
   return result;
+}
+
+/* ==================== G6 区：选中文本批注输入 ==================== */
+
+const SELECTION_ANNOTATION_CSS = [
+  ".dsh-selection-popover{position:fixed;z-index:2147483000;display:flex;gap:4px;padding:6px;border-radius:10px;border:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-elevated,var(--dsw-alias-bg-base));box-shadow:0 12px 32px color-mix(in srgb,var(--dsw-alias-label-primary) 16%,transparent);color:var(--dsw-alias-label-primary);font:13px/1.2 inherit}",
+  ".dsh-selection-popover button{border:0;border-radius:8px;padding:6px 10px;background:transparent;color:inherit;cursor:pointer;font:inherit}",
+  ".dsh-selection-popover button:hover{background:var(--dsw-alias-interactive-bg-hover)}",
+  ".dsh-selection-note{position:fixed;z-index:2147483001;width:min(360px,calc(100vw - 32px));padding:14px;border-radius:18px;border:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-elevated,var(--dsw-alias-bg-base));box-shadow:0 18px 48px color-mix(in srgb,var(--dsw-alias-label-primary) 20%,transparent);color:var(--dsw-alias-label-primary);font:13px/1.4 inherit}",
+  ".dsh-selection-note-preview{max-height:104px;overflow:auto;margin-bottom:10px;color:var(--dsw-alias-label-secondary);white-space:pre-wrap}",
+  ".dsh-selection-note-preview strong{display:block;margin-bottom:4px;color:var(--dsw-alias-label-tertiary);font-size:12px;font-weight:500}",
+  ".dsh-selection-note textarea{box-sizing:border-box;width:100%;min-height:96px;resize:vertical;border:1px solid var(--dsw-alias-border-l1);border-radius:14px;padding:10px 12px;background:var(--dsw-alias-bg-base);color:inherit;font:inherit;outline:none}",
+  ".dsh-selection-note textarea:focus{border-color:var(--dsw-static-deepseek-500);box-shadow:0 0 0 3px color-mix(in srgb,var(--dsw-static-deepseek-500) 16%,transparent)}",
+  ".dsh-selection-note-actions{display:flex;align-items:center;justify-content:flex-end;gap:8px;margin-top:10px}",
+  ".dsh-selection-note-actions button{border:1px solid var(--dsw-alias-border-l1);border-radius:999px;padding:6px 13px;background:transparent;color:inherit;font:inherit;cursor:pointer}",
+  ".dsh-selection-note-actions button[data-danger]{margin-right:auto;color:#d92d20;border-color:color-mix(in srgb,#d92d20 28%,transparent);background:color-mix(in srgb,#d92d20 7%,transparent)}",
+  ".dsh-selection-note-actions button[data-primary]{border-color:var(--dsw-static-deepseek-500);background:var(--dsw-static-deepseek-500);color:white}",
+  ".dsh-selection-anchor{position:absolute;z-index:2147482999;display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:999px;background:#0a84ff;color:#fff;font:700 13px/1 system-ui,-apple-system,BlinkMacSystemFont,\"Segoe UI\",sans-serif;box-shadow:0 4px 12px rgba(10,132,255,.34);cursor:pointer;user-select:none}",
+  ".dsh-selection-highlight{position:absolute;z-index:2147482998;border-radius:4px;background:rgba(10,132,255,.16);pointer-events:none}",
+  ".dsh-selection-anchor[data-dsh-annotation-tone=\"edit\"]{background:#7c3aed;box-shadow:0 4px 12px rgba(124,58,237,.32)}",
+  ".dsh-selection-highlight[data-dsh-annotation-tone=\"edit\"]{background:rgba(124,58,237,.16)}",
+  ".dsh-annotation-composer{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:0 10px 8px;min-height:30px}",
+  ".dsh-annotation-composer-edit{margin:0 10px 6px}",
+  ".dsh-annotation-chip,.dsh-annotation-history-chip{display:inline-flex;align-items:center;gap:6px;min-height:30px;border:1px solid var(--dsw-alias-border-l1);border-radius:999px;padding:0 10px;background:var(--dsw-alias-bg-elevated,var(--dsw-alias-bg-base));color:var(--dsw-alias-label-primary);font:13px/1.2 inherit;box-shadow:0 2px 10px color-mix(in srgb,var(--dsw-alias-label-primary) 8%,transparent);cursor:pointer}",
+  ".dsh-annotation-chip::before,.dsh-annotation-history-chip::before{content:\"\";width:16px;height:16px;opacity:.82;background:currentColor;-webkit-mask:url('data:image/svg+xml,%3Csvg%20viewBox%3D%220%200%2016%2016%22%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%3E%3Cpath%20fill%3D%22%23000%22%20fill-rule%3D%22evenodd%22%20d%3D%22M3.2%202.4A2.2%202.2%200%200%200%201%204.6v4.6a2.2%202.2%200%200%200%202.2%202.2h1.1v2.05c0%20.45.54.68.86.36l2.41-2.41h5.23A2.2%202.2%200%200%200%2015%209.2V4.6a2.2%202.2%200%200%200-2.2-2.2H3.2Zm0%201.2h9.6a1%201%200%200%201%201%201v4.6a1%201%200%200%201-1%201H7.07l-1.57%201.57V10.2H3.2a1%201%200%200%201-1-1V4.6a1%201%200%200%201%201-1Z%22/%3E%3C/svg%3E') center/contain no-repeat;mask:url('data:image/svg+xml,%3Csvg%20viewBox%3D%220%200%2016%2016%22%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%3E%3Cpath%20fill%3D%22%23000%22%20fill-rule%3D%22evenodd%22%20d%3D%22M3.2%202.4A2.2%202.2%200%200%200%201%204.6v4.6a2.2%202.2%200%200%200%202.2%202.2h1.1v2.05c0%20.45.54.68.86.36l2.41-2.41h5.23A2.2%202.2%200%200%200%2015%209.2V4.6a2.2%202.2%200%200%200-2.2-2.2H3.2Zm0%201.2h9.6a1%201%200%200%201%201%201v4.6a1%201%200%200%201-1%201H7.07l-1.57%201.57V10.2H3.2a1%201%200%200%201-1-1V4.6a1%201%200%200%201%201-1Z%22/%3E%3C/svg%3E') center/contain no-repeat}",
+  ".dsh-annotation-chip button{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;margin-right:-4px;border:0;border-radius:999px;background:transparent;color:var(--dsw-alias-label-secondary);font:16px/1 inherit;cursor:pointer}",
+  ".dsh-annotation-chip button:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}",
+  ".dsh-annotation-preview{position:fixed;z-index:2147483002;width:min(420px,calc(100vw - 32px));max-height:min(520px,calc(100vh - 32px));overflow:auto;padding:14px;border-radius:18px;border:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-elevated,var(--dsw-alias-bg-base));box-shadow:0 18px 48px color-mix(in srgb,var(--dsw-alias-label-primary) 20%,transparent);color:var(--dsw-alias-label-primary);font:13px/1.45 inherit}",
+  ".dsh-annotation-preview-item+.dsh-annotation-preview-item{margin-top:12px;padding-top:12px;border-top:1px solid var(--dsw-alias-border-l1)}",
+  ".dsh-annotation-preview-label{margin-bottom:4px;color:var(--dsw-alias-label-tertiary);font-size:12px}",
+  ".dsh-annotation-preview-text{white-space:pre-wrap;color:var(--dsw-alias-label-primary)}",
+  ".dsh-annotation-preview-comment{white-space:pre-wrap;color:var(--dsw-alias-label-secondary)}",
+].join("");
+
+const SELECTION_ANNOTATION_RUNTIME_SOURCE = `
+		const DSH_SELECTION_ANNOTATION_CSS = ${JSON.stringify(SELECTION_ANNOTATION_CSS)};
+		if (typeof document !== "undefined" && document.querySelector('style[data-dsh-frontend="selection-annotation"]') === null) {
+			const tag = document.createElement("style");
+			tag.dataset.dshFrontend = "selection-annotation";
+			tag.textContent = DSH_SELECTION_ANNOTATION_CSS;
+			document.head.appendChild(tag);
+		}
+		if (typeof window !== "undefined" && window.__DSH_SELECTION_ANNOTATION_INSTALLED__ !== true) {
+			window.__DSH_SELECTION_ANNOTATION_INSTALLED__ = true;
+			let selectionPopover = null;
+			let selectionNote = null;
+			let annotationPreview = null;
+			let selectedText = "";
+			let selectedRect = null;
+			let selectedRange = null;
+			let nextAnnotationId = 1;
+			let pendingAnnotations = [];
+			let selectionMarkerRecords = [];
+			let editSelectionMarkerRecords = [];
+			let editAnnotationSignature = null;
+			let markerUpdateQueued = false;
+			let pendingSubmitSignature = null;
+			const DSH_ANNOTATION_STORAGE_KEY = "__dsh_selection_annotations:" + location.pathname + location.search;
+			function dshHideSelectionUi() {
+				selectionPopover?.remove();
+				selectionPopover = null;
+				selectionNote?.remove();
+				selectionNote = null;
+			}
+			function dshHideAnnotationPreview() {
+				annotationPreview?.remove();
+				annotationPreview = null;
+			}
+			function dshSelectionEditable(target) {
+				return target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target?.isContentEditable === true || target?.closest?.("[contenteditable=true]") !== null;
+			}
+			function dshVisibleTextarea() {
+				return Array.from(document.querySelectorAll("textarea")).reverse().find((textarea) => textarea.disabled !== true && textarea.getClientRects().length > 0 && textarea.closest(".dsh-selection-note") === null && textarea.closest("[data-dsh-edit-shell]") === null) ?? null;
+			}
+			function dshTextareaIsEdit(textarea) {
+				return textarea?.closest?.("[data-dsh-edit-shell]") !== null;
+			}
+			function dshVisibleEditTextarea() {
+				return Array.from(document.querySelectorAll("[data-dsh-edit-shell] textarea")).reverse().find((textarea) => textarea.disabled !== true && textarea.getClientRects().length > 0 && textarea.closest(".dsh-selection-note") === null) ?? null;
+			}
+			function dshSetTextareaValue(textarea, value) {
+				const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set;
+				if (setter !== undefined) setter.call(textarea, value);
+				else textarea.value = value;
+				textarea.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: value }));
+				textarea.dispatchEvent(new Event("change", { bubbles: true }));
+				textarea.focus();
+			}
+			function dshLoadAnnotations() {
+				try {
+					const value = sessionStorage.getItem(DSH_ANNOTATION_STORAGE_KEY);
+					if (value === null) return;
+					const parsed = JSON.parse(value);
+					if (!Array.isArray(parsed)) return;
+				pendingAnnotations = parsed.filter((item) => typeof item?.text === "string").map((item) => ({
+					id: Number.isSafeInteger(item.id) ? item.id : nextAnnotationId++,
+					text: item.text,
+					annotation: typeof item.annotation === "string" ? item.annotation : ""
+				}));
+				dshRenumberAnnotations();
+			} catch {
+				pendingAnnotations = [];
+			}
+			}
+			function dshPersistAnnotations() {
+				try {
+					if (pendingAnnotations.length === 0) sessionStorage.removeItem(DSH_ANNOTATION_STORAGE_KEY);
+					else sessionStorage.setItem(DSH_ANNOTATION_STORAGE_KEY, JSON.stringify(pendingAnnotations));
+				} catch {}
+			}
+			function dshClearSelectionMarkers() {
+				for (const record of selectionMarkerRecords) {
+					record.highlight?.remove();
+					record.anchor?.remove();
+				}
+				selectionMarkerRecords = [];
+			}
+			function dshClearEditSelectionMarkers() {
+				for (const record of editSelectionMarkerRecords) {
+					record.highlight?.remove();
+					record.anchor?.remove();
+				}
+				editSelectionMarkerRecords = [];
+				editAnnotationSignature = null;
+			}
+			function dshRenumberAnnotations() {
+				pendingAnnotations.forEach((item, index) => {
+					item.id = index + 1;
+				});
+				nextAnnotationId = pendingAnnotations.length + 1;
+				for (const record of selectionMarkerRecords) {
+					const index = pendingAnnotations.indexOf(record.item);
+					if (index < 0) continue;
+					const label = String(index + 1);
+					record.item.id = index + 1;
+					record.anchor.textContent = label;
+					record.anchor.setAttribute("aria-label", "查看注释 " + label);
+				}
+			}
+			function dshRemoveAnnotationById(id) {
+				pendingAnnotations = pendingAnnotations.filter((item) => item.id !== id);
+				const keptRecords = [];
+				for (const record of selectionMarkerRecords) {
+					if (record.item?.id === id) {
+						record.highlight?.remove();
+						record.anchor?.remove();
+					}
+					else {
+						keptRecords.push(record);
+					}
+				}
+				selectionMarkerRecords = keptRecords;
+				dshRenumberAnnotations();
+				dshPersistAnnotations();
+				dshRenderComposerChip();
+				dshHideAnnotationPreview();
+			}
+			function dshAnnotationPayload(annotations = pendingAnnotations) {
+				return annotations.map((item) => {
+					const payload = { text: item.text };
+					if (typeof item.annotation === "string" && item.annotation.trim() !== "") payload.annotation = item.annotation.trim();
+					return payload;
+				});
+			}
+			function dshAnnotationBlock(annotations = pendingAnnotations) {
+				return "\\n<response-annotations>\\n" + JSON.stringify(dshAnnotationPayload(annotations), null, 2) + "\\n</response-annotations>\\n";
+			}
+			function dshAnnotationSignature(annotations = pendingAnnotations) {
+				return JSON.stringify(dshAnnotationPayload(annotations));
+			}
+			function dshFindComposerCard(textarea) {
+				const editCard = textarea?.closest?.("[data-dsh-edit-card]") ?? null;
+				if (editCard !== null) return editCard;
+				let node = textarea?.parentElement ?? null;
+				let fallback = textarea?.parentElement ?? null;
+				for (let index = 0; index < 8 && node !== null; index += 1, node = node.parentElement) {
+					const rect = node.getBoundingClientRect();
+					if (node.closest?.("[data-dsh-edit-shell]") !== null) continue;
+					if (dshFindSubmitButton(node) !== null && node.querySelector?.("textarea") !== null) return node;
+					if (rect.width >= 480 && rect.height >= 72 && rect.bottom > window.innerHeight - 360) return node;
+					fallback = node;
+				}
+				return fallback;
+			}
+			function dshButtonVisible(button) {
+				const rect = button.getBoundingClientRect();
+				return rect.width > 0 && rect.height > 0;
+			}
+			function dshButtonLooksLikeSend(button) {
+				const label = ((button.getAttribute("aria-label") ?? "") + " " + (button.getAttribute("title") ?? "") + " " + (button.textContent ?? "")).toLowerCase();
+				if (/发送|send|submit|提交|重新发送/.test(label)) return true;
+				if (/文件|附件|命令|录音|语音|麦克风|模型|access|取消|保存|清除|copy|复制/.test(label)) return false;
+				const rect = button.getBoundingClientRect();
+				return button.querySelector("svg") !== null && rect.width <= 72 && rect.height <= 72;
+			}
+			function dshFindSubmitButton(root = document) {
+				for (const selector of ['button[data-dsh-edit-send]', 'button[aria-label="发送消息"]', 'button[aria-label="Send message"]', 'button[aria-label="重新发送"]', 'button[type="submit"]']) {
+					const button = root.querySelector?.(selector);
+					if (button instanceof HTMLButtonElement && dshButtonVisible(button)) return button;
+				}
+				const buttons = Array.from(root.querySelectorAll?.("button") ?? []).filter((button) => button instanceof HTMLButtonElement && dshButtonVisible(button) && dshButtonLooksLikeSend(button));
+				buttons.sort((left, right) => {
+					const leftRect = left.getBoundingClientRect();
+					const rightRect = right.getBoundingClientRect();
+					return rightRect.right + rightRect.bottom * 0.01 - (leftRect.right + leftRect.bottom * 0.01);
+				});
+				return buttons[0] ?? null;
+			}
+			function dshSyncAnnotationSubmitState() {
+				const textarea = dshVisibleTextarea();
+				const card = dshFindComposerCard(textarea);
+				const button = card === null ? null : dshFindSubmitButton(card);
+				if (!(button instanceof HTMLButtonElement)) return;
+				if (pendingAnnotations.length > 0) {
+					button.disabled = false;
+					button.removeAttribute("disabled");
+					button.setAttribute("aria-disabled", "false");
+					button.dataset.dshAnnotationEnabled = "true";
+					return;
+				}
+				if (button.dataset.dshAnnotationEnabled === "true") {
+					delete button.dataset.dshAnnotationEnabled;
+					if ((textarea?.value ?? "").trim() === "") button.disabled = true;
+				}
+			}
+			function dshFindDirectChild(parent, child) {
+				let node = child;
+				while (node !== null && node.parentElement !== parent) node = node.parentElement;
+				return node;
+			}
+			function dshRenderAnnotationPreview(anchor, annotations) {
+				dshHideAnnotationPreview();
+				if (!Array.isArray(annotations) || annotations.length === 0) return;
+				const panel = document.createElement("div");
+				panel.className = "dsh-annotation-preview";
+				annotations.forEach((item, index) => {
+					const row = document.createElement("div");
+					row.className = "dsh-annotation-preview-item";
+					const selectedLabel = document.createElement("div");
+					selectedLabel.className = "dsh-annotation-preview-label";
+					selectedLabel.textContent = (index + 1) + ". 所选文本：";
+					const selectedValue = document.createElement("div");
+					selectedValue.className = "dsh-annotation-preview-text";
+					selectedValue.textContent = item.text;
+					row.append(selectedLabel, selectedValue);
+					if (typeof item.annotation === "string" && item.annotation.trim() !== "") {
+						const commentLabel = document.createElement("div");
+						commentLabel.className = "dsh-annotation-preview-label";
+						commentLabel.textContent = "用户评论：";
+						const commentValue = document.createElement("div");
+						commentValue.className = "dsh-annotation-preview-comment";
+						commentValue.textContent = item.annotation.trim();
+						row.append(commentLabel, commentValue);
+					}
+					panel.appendChild(row);
+				});
+				document.body.appendChild(panel);
+				const rect = anchor.getBoundingClientRect();
+				const left = Math.min(Math.max(12, rect.left), window.innerWidth - panel.offsetWidth - 12);
+				const top = rect.top + rect.height + panel.offsetHeight + 12 <= window.innerHeight ? rect.top + rect.height + 8 : Math.max(12, rect.top - panel.offsetHeight - 8);
+				panel.style.left = left + "px";
+				panel.style.top = top + "px";
+				annotationPreview = panel;
+			}
+			function dshRenderComposerChip() {
+				const textarea = dshVisibleTextarea();
+				const oldChip = document.querySelector('.dsh-annotation-composer[data-dsh-annotation-target="main"]');
+				if (pendingAnnotations.length === 0 || textarea === null) {
+					oldChip?.remove();
+					dshSyncAnnotationSubmitState();
+					return false;
+				}
+				const card = dshFindComposerCard(textarea);
+				if (card === null) return false;
+				const signature = dshAnnotationSignature();
+				if (oldChip !== null && oldChip.parentElement === card && oldChip.dataset.dshAnnotationSignature === signature) {
+					dshSyncAnnotationSubmitState();
+					return true;
+				}
+				const scroll = textarea.closest("div");
+				const chipRow = oldChip ?? document.createElement("div");
+				chipRow.className = "dsh-annotation-composer";
+				chipRow.dataset.dshAnnotationTarget = "main";
+				chipRow.dataset.dshAnnotationCount = String(pendingAnnotations.length);
+				chipRow.dataset.dshAnnotationSignature = signature;
+				chipRow.textContent = "";
+				const chip = document.createElement("span");
+				chip.className = "dsh-annotation-chip";
+				chip.tabIndex = 0;
+				chip.textContent = pendingAnnotations.length + " 条注释";
+				const showChipPreview = (event) => {
+					event.stopPropagation();
+					dshRenderAnnotationPreview(chip, pendingAnnotations);
+				};
+				chip.addEventListener("click", showChipPreview);
+				chip.addEventListener("mouseenter", showChipPreview);
+				const clear = document.createElement("button");
+				clear.type = "button";
+				clear.setAttribute("aria-label", "清除注释");
+				clear.textContent = "×";
+				clear.addEventListener("click", (event) => {
+					event.stopPropagation();
+					pendingAnnotations = [];
+					dshPersistAnnotations();
+					dshClearSelectionMarkers();
+					dshRenderComposerChip();
+					dshHideAnnotationPreview();
+				});
+				chip.appendChild(clear);
+				chipRow.appendChild(chip);
+				const editScroll = card.querySelector?.("[data-dsh-edit-scroll]") ?? null;
+				const directChild = dshFindDirectChild(card, editScroll ?? scroll ?? textarea);
+				if (oldChip === null || oldChip.parentElement !== card || oldChip.nextElementSibling !== (editScroll ?? directChild)) card.insertBefore(chipRow, editScroll ?? directChild ?? card.firstChild);
+				dshSyncAnnotationSubmitState();
+				return true;
+			}
+			function dshRenderEditAnnotationChip() {
+				const textarea = dshVisibleEditTextarea();
+				const oldChip = document.querySelector('.dsh-annotation-composer[data-dsh-annotation-target="edit"]');
+				if (textarea === null) {
+					oldChip?.remove();
+					dshClearEditSelectionMarkers();
+					return false;
+				}
+				const parsed = dshParseAnnotationBlock(textarea.value ?? "");
+				if (parsed === null) {
+					oldChip?.remove();
+					dshClearEditSelectionMarkers();
+					return false;
+				}
+				const card = textarea.closest("[data-dsh-edit-card]");
+				const editScroll = card?.querySelector?.("[data-dsh-edit-scroll]") ?? null;
+				if (card === null) return false;
+				for (const view of card.querySelectorAll('[data-dsh-edit-mirror], div[aria-hidden="true"]')) {
+					if ((view.textContent ?? "").includes("<response-annotations>")) view.textContent = parsed.visibleText + "\\n";
+				}
+				const signature = dshAnnotationSignature(parsed.annotations);
+				if (oldChip !== null && oldChip.parentElement === card && oldChip.dataset.dshAnnotationSignature === signature) {
+					dshRenderEditSelectionMarkers(parsed.annotations);
+					return true;
+				}
+				const chipRow = oldChip ?? document.createElement("div");
+				chipRow.className = "dsh-annotation-composer dsh-annotation-composer-edit";
+				chipRow.dataset.dshAnnotationTarget = "edit";
+				chipRow.dataset.dshAnnotationSignature = signature;
+				chipRow.textContent = "";
+				const chip = document.createElement("span");
+				chip.className = "dsh-annotation-chip";
+				chip.tabIndex = 0;
+				chip.textContent = parsed.annotations.length + " 条注释";
+				const showChipPreview = (event) => {
+					event.stopPropagation();
+					dshRenderAnnotationPreview(chip, parsed.annotations);
+				};
+				chip.addEventListener("click", showChipPreview);
+				chip.addEventListener("mouseenter", showChipPreview);
+				const clear = document.createElement("button");
+				clear.type = "button";
+				clear.setAttribute("aria-label", "清除这条消息的注释");
+				clear.textContent = "×";
+				clear.addEventListener("click", (event) => {
+					event.stopPropagation();
+					dshSetTextareaValue(textarea, parsed.visibleText);
+					oldChip?.remove();
+					dshClearEditSelectionMarkers();
+					dshHideAnnotationPreview();
+				});
+				chip.appendChild(clear);
+				chipRow.appendChild(chip);
+				card.insertBefore(chipRow, editScroll ?? card.firstChild);
+				dshRenderEditSelectionMarkers(parsed.annotations);
+				return true;
+			}
+			function dshRangeElement(range) {
+				const ancestor = range?.commonAncestorContainer ?? null;
+				if (ancestor === null) return null;
+				return ancestor.nodeType === Node.ELEMENT_NODE ? ancestor : ancestor.parentElement;
+			}
+			function dshRangePointVisible(range, x, y) {
+				if (range === null || x < 0 || y < 0 || x > window.innerWidth || y > window.innerHeight) return false;
+				const element = dshRangeElement(range);
+				if (element === null) return false;
+				const top = document.elementsFromPoint(x, y).find((node) => node.closest?.(".dsh-selection-highlight,.dsh-selection-anchor") === null);
+				return top !== undefined && (top === element || element.contains(top) || top.contains(element));
+			}
+			function dshRangeRectVisible(range, rect) {
+				if (range === null) return true;
+				if (rect.right < 0 || rect.left > window.innerWidth || rect.bottom < 0 || rect.top > window.innerHeight) return false;
+				const left = Math.min(Math.max(rect.left + 2, 1), window.innerWidth - 1);
+				const midX = Math.min(Math.max(rect.left + rect.width / 2, 1), window.innerWidth - 1);
+				const right = Math.min(Math.max(rect.right - 2, 1), window.innerWidth - 1);
+				const midY = Math.min(Math.max(rect.top + rect.height / 2, 1), window.innerHeight - 1);
+				return [[left, midY], [midX, midY], [right, midY]].some(([x, y]) => dshRangePointVisible(range, x, y));
+			}
+			function dshRangeRect(range, fallbackRect = null) {
+				try {
+					if (range !== null) {
+						const rects = Array.from(range.getClientRects()).filter((rect) => rect.width > 0 && rect.height > 0 && dshRangeRectVisible(range, rect));
+						if (rects.length > 0) {
+							const left = Math.min(...rects.map((rect) => rect.left));
+							const top = Math.min(...rects.map((rect) => rect.top));
+							const right = Math.max(...rects.map((rect) => rect.right));
+							const bottom = Math.max(...rects.map((rect) => rect.bottom));
+							return { left, top, right, bottom, width: right - left, height: bottom - top };
+						}
+						const rect = range.getBoundingClientRect();
+						if (rect.width > 0 && rect.height > 0 && dshRangeRectVisible(range, rect)) return rect;
+						return null;
+					}
+				} catch {}
+				return fallbackRect;
+			}
+			function dshUpdateSelectionMarker(record) {
+				const rect = dshRangeRect(record.range, record.fallbackRect);
+				if (rect === null || rect.width <= 0 || rect.height <= 0) {
+					record.highlight.style.display = "none";
+					record.anchor.style.display = "none";
+					return;
+				}
+				record.highlight.style.display = "";
+				record.anchor.style.display = "";
+				record.highlight.style.left = Math.max(0, window.scrollX + rect.left) + "px";
+				record.highlight.style.top = Math.max(0, window.scrollY + rect.top) + "px";
+				record.highlight.style.width = Math.max(1, rect.width) + "px";
+				record.highlight.style.height = Math.max(1, rect.height) + "px";
+				record.anchor.style.left = Math.min(window.scrollX + rect.right + 6, window.scrollX + window.innerWidth - 36) + "px";
+				record.anchor.style.top = Math.max(window.scrollY + rect.top - 8, window.scrollY + 8) + "px";
+			}
+			function dshUpdateSelectionMarkers() {
+				for (const record of selectionMarkerRecords) dshUpdateSelectionMarker(record);
+				for (const record of editSelectionMarkerRecords) dshUpdateSelectionMarker(record);
+			}
+			function dshQueueSelectionMarkerUpdate() {
+				if (markerUpdateQueued) return;
+				markerUpdateQueued = true;
+				window.requestAnimationFrame(() => {
+					markerUpdateQueued = false;
+					dshUpdateSelectionMarkers();
+				});
+			}
+			function dshCreateSelectionAnchor(item, range, fallbackRect, tone = "draft") {
+				if (dshRangeRect(range, fallbackRect) === null) return;
+				const highlight = document.createElement("div");
+				highlight.className = "dsh-selection-highlight";
+				if (tone !== "draft") highlight.dataset.dshAnnotationTone = tone;
+				const anchor = document.createElement("button");
+				anchor.type = "button";
+				anchor.className = "dsh-selection-anchor";
+				anchor.textContent = String(item.id);
+				anchor.setAttribute("aria-label", "查看注释 " + item.id);
+				if (tone !== "draft") anchor.dataset.dshAnnotationTone = tone;
+				anchor.addEventListener("click", (event) => {
+					event.stopPropagation();
+					const anchorRect = anchor.getBoundingClientRect();
+					if (tone === "edit") dshOpenEditSelectionNote(anchorRect, item);
+					else dshOpenSelectionNote(anchorRect, item);
+				});
+				const record = { item, range, fallbackRect, highlight, anchor };
+				dshUpdateSelectionMarker(record);
+				document.body.append(highlight, anchor);
+				if (tone === "edit") editSelectionMarkerRecords.push(record);
+				else selectionMarkerRecords.push(record);
+			}
+			function dshFindRangeForText(text) {
+				const flow = document.querySelector("[data-chat-flow]");
+				if (flow === null || typeof text !== "string" || text.trim() === "") return null;
+				const needle = text.trim().replace(/\s+/g, " ");
+				const walker = document.createTreeWalker(flow, NodeFilter.SHOW_TEXT, {
+					acceptNode(node) {
+						const parent = node.parentElement;
+						if (parent === null) return NodeFilter.FILTER_REJECT;
+						if (parent.closest(".dsh-selection-popover,.dsh-selection-note,.dsh-annotation-preview,.dsh-annotation-composer,.dsh-annotation-history-chip,[data-dsh-edit-shell],textarea,input,button") !== null) return NodeFilter.FILTER_REJECT;
+						if ((node.textContent ?? "").trim() === "") return NodeFilter.FILTER_REJECT;
+						return NodeFilter.FILTER_ACCEPT;
+					}
+				});
+				let node = walker.nextNode();
+				while (node !== null) {
+					const raw = node.textContent ?? "";
+					const compact = raw.replace(/\s+/g, " ");
+					const index = compact.indexOf(needle);
+					if (index >= 0) {
+						const prefix = compact.slice(0, index);
+						const suffix = compact.slice(0, index + needle.length);
+						const start = Math.min(raw.length, prefix.length);
+						const end = Math.min(raw.length, Math.max(start + 1, suffix.length));
+						const range = document.createRange();
+						range.setStart(node, start);
+						range.setEnd(node, end);
+						return range;
+					}
+					node = walker.nextNode();
+				}
+				return null;
+			}
+			function dshRenderEditSelectionMarkers(annotations) {
+				const signature = dshAnnotationSignature(annotations);
+				if (signature === editAnnotationSignature) return;
+				dshClearEditSelectionMarkers();
+				editAnnotationSignature = signature;
+				annotations.forEach((item, index) => {
+					const range = dshFindRangeForText(item.text);
+					if (range === null) return;
+					dshCreateSelectionAnchor({ ...item, id: index + 1 }, range, null, "edit");
+				});
+			}
+			function dshSetEditAnnotations(textarea, visibleText, annotations) {
+				const body = (visibleText ?? "").trim();
+				const nextValue = annotations.length === 0 ? body : body + (body.endsWith("\\n") || body === "" ? "" : "\\n") + dshAnnotationBlock(annotations);
+				editAnnotationSignature = null;
+				dshSetTextareaValue(textarea, nextValue);
+				window.setTimeout(dshRenderEditAnnotationChip, 0);
+			}
+			function dshOpenEditSelectionNote(rect, existingItem) {
+				const editTextarea = dshVisibleEditTextarea();
+				const parsed = dshParseAnnotationBlock(editTextarea?.value ?? "");
+				const index = Math.max(0, Number(existingItem?.id ?? 1) - 1);
+				const current = parsed?.annotations?.[index] ?? null;
+				if (editTextarea === null || parsed === null || current === null) return;
+				selectionPopover?.remove();
+				selectionPopover = null;
+				selectionNote?.remove();
+				dshHideAnnotationPreview();
+				const note = document.createElement("div");
+				note.className = "dsh-selection-note";
+				const preview = document.createElement("div");
+				preview.className = "dsh-selection-note-preview";
+				const label = document.createElement("strong");
+				label.textContent = "所选文本：";
+				const previewText = document.createElement("span");
+				previewText.textContent = current.text;
+				preview.append(label, previewText);
+				const textarea = document.createElement("textarea");
+				textarea.placeholder = "添加可选评论...";
+				textarea.value = current.annotation ?? "";
+				const actions = document.createElement("div");
+				actions.className = "dsh-selection-note-actions";
+				const remove = document.createElement("button");
+				remove.type = "button";
+				remove.dataset.danger = "true";
+				remove.textContent = "删除";
+				const cancel = document.createElement("button");
+				cancel.type = "button";
+				cancel.textContent = "取消";
+				const save = document.createElement("button");
+				save.type = "button";
+				save.dataset.primary = "true";
+				save.textContent = "保存";
+				const readLatest = () => {
+					const latest = dshParseAnnotationBlock(editTextarea.value ?? "");
+					const latestItem = latest?.annotations?.[index] ?? null;
+					return latest === null || latestItem === null ? null : latest;
+				};
+				remove.addEventListener("click", () => {
+					const latest = readLatest();
+					if (latest === null) return;
+					const annotations = latest.annotations.filter((_, itemIndex) => itemIndex !== index);
+					dshSetEditAnnotations(editTextarea, latest.visibleText, annotations);
+					dshHideSelectionUi();
+				});
+				cancel.addEventListener("click", dshHideSelectionUi);
+				const commit = () => {
+					const latest = readLatest();
+					if (latest === null) return;
+					const annotations = latest.annotations.map((item, itemIndex) => itemIndex === index ? { ...item, annotation: textarea.value.trim() } : item);
+					dshSetEditAnnotations(editTextarea, latest.visibleText, annotations);
+					dshHideSelectionUi();
+				};
+				save.addEventListener("click", commit);
+				textarea.addEventListener("keydown", (event) => {
+					if (event.key !== "Enter" || event.shiftKey || event.isComposing) return;
+					event.preventDefault();
+					commit();
+				});
+				actions.append(remove, cancel, save);
+				note.append(preview, textarea, actions);
+				document.body.appendChild(note);
+				selectionNote = note;
+				dshPlaceFloating(note, rect);
+				textarea.focus();
+			}
+			function dshAddPendingAnnotation(comment) {
+				const item = {
+					id: nextAnnotationId++,
+					text: selectedText,
+					annotation: typeof comment === "string" ? comment.trim() : ""
+				};
+				pendingAnnotations.push(item);
+				dshRenumberAnnotations();
+				dshPersistAnnotations();
+				dshCreateSelectionAnchor(item, selectedRange?.cloneRange?.() ?? null, selectedRect);
+				dshRenderComposerChip();
+			}
+			function dshPrepareTextareaForSubmit(textarea) {
+				if (textarea?.closest?.(".dsh-selection-note") !== null) return false;
+				if (dshTextareaIsEdit(textarea)) return false;
+				if (pendingAnnotations.length === 0 || textarea === null || textarea.dataset.dshAnnotationPrepared === "true") return false;
+				const originalValue = textarea.value;
+				const block = dshAnnotationBlock();
+				const submitSignature = dshAnnotationSignature();
+				const spacer = originalValue === "" || originalValue.endsWith("\\n") ? "" : "\\n";
+				const preparedValue = originalValue + spacer + block;
+				pendingSubmitSignature = submitSignature;
+				textarea.dataset.dshAnnotationPrepared = "true";
+				dshSetTextareaValue(textarea, preparedValue);
+				window.setTimeout(() => {
+					if (textarea.value === preparedValue) {
+						dshSetTextareaValue(textarea, originalValue);
+						if (pendingSubmitSignature === submitSignature) pendingSubmitSignature = null;
+					}
+					delete textarea.dataset.dshAnnotationPrepared;
+				}, 350);
+				window.setTimeout(() => {
+					if (textarea.value === "") {
+						pendingAnnotations = [];
+						pendingSubmitSignature = null;
+						dshPersistAnnotations();
+						dshClearSelectionMarkers();
+						dshRenderComposerChip();
+						dshHideAnnotationPreview();
+					}
+				}, 900);
+				return true;
+			}
+			function dshParseAnnotationBlock(rawText) {
+				if (typeof rawText !== "string") return null;
+				const match = rawText.match(/<response-annotations>\\s*([\\s\\S]*?)\\s*<\\/response-annotations>/);
+				if (match === null) return null;
+				try {
+					const parsed = JSON.parse(match[1]);
+					if (!Array.isArray(parsed)) return null;
+					const annotations = parsed.filter((item) => typeof item?.text === "string").map((item) => ({
+						text: item.text,
+						annotation: typeof item.annotation === "string" ? item.annotation : ""
+					}));
+					if (annotations.length === 0) return null;
+					return { annotations, visibleText: rawText.replace(match[0], "").trim() };
+				} catch {
+					return null;
+				}
+			}
+			function dshDecorateHistoryAnnotations() {
+				const flow = document.querySelector("[data-chat-flow]");
+				if (flow === null) return;
+				const elements = Array.from(flow.querySelectorAll("*")).filter((element) => {
+					if (element.closest("[data-dsh-edit-shell]") !== null) return false;
+					if (element.closest(".dsh-annotation-preview,.dsh-annotation-composer,.dsh-annotation-history-chip") !== null) return false;
+					const text = element.textContent ?? "";
+					if (!text.includes("<response-annotations>")) return false;
+					return !Array.from(element.children).some((child) => (child.textContent ?? "").includes("<response-annotations>"));
+				});
+				for (const element of elements) {
+					if (element.dataset.dshAnnotationHistory === "true") continue;
+					const parsed = dshParseAnnotationBlock(element.textContent ?? "");
+					if (parsed === null) continue;
+					element.dataset.dshAnnotationHistory = "true";
+					element.textContent = parsed.visibleText;
+					const chip = document.createElement("span");
+					chip.className = "dsh-annotation-history-chip";
+					chip.tabIndex = 0;
+					chip.textContent = parsed.annotations.length + " 条注释";
+					chip.addEventListener("click", (event) => {
+						event.stopPropagation();
+						dshRenderAnnotationPreview(chip, parsed.annotations);
+					});
+					element.insertAdjacentElement("beforebegin", chip);
+					if (pendingSubmitSignature !== null && dshAnnotationSignature(parsed.annotations) === pendingSubmitSignature) {
+						pendingAnnotations = [];
+						pendingSubmitSignature = null;
+						dshPersistAnnotations();
+						dshClearSelectionMarkers();
+						dshRenderComposerChip();
+						dshHideAnnotationPreview();
+					}
+				}
+			}
+			function dshPlaceFloating(element, rect) {
+				const left = Math.min(Math.max(12, rect.left + rect.width / 2 - element.offsetWidth / 2), window.innerWidth - element.offsetWidth - 12);
+				const top = Math.max(12, rect.top - element.offsetHeight - 10);
+				element.style.left = left + "px";
+				element.style.top = top + "px";
+			}
+			function dshOpenSelectionNote(rect, existingItem = null) {
+				selectionPopover?.remove();
+				selectionPopover = null;
+				selectionNote?.remove();
+				dshHideAnnotationPreview();
+				const note = document.createElement("div");
+				note.className = "dsh-selection-note";
+				const preview = document.createElement("div");
+				preview.className = "dsh-selection-note-preview";
+				const label = document.createElement("strong");
+				label.textContent = "所选文本：";
+				const previewText = document.createElement("span");
+				previewText.textContent = existingItem?.text ?? selectedText;
+				preview.append(label, previewText);
+				const textarea = document.createElement("textarea");
+				textarea.placeholder = "添加可选评论...";
+				textarea.value = existingItem?.annotation ?? "";
+				const actions = document.createElement("div");
+				actions.className = "dsh-selection-note-actions";
+				const cancel = document.createElement("button");
+				cancel.type = "button";
+				cancel.textContent = "取消";
+				const remove = document.createElement("button");
+				remove.type = "button";
+				remove.dataset.danger = "true";
+				remove.textContent = "删除";
+				const save = document.createElement("button");
+				save.type = "button";
+				save.dataset.primary = "true";
+				save.textContent = "保存";
+				cancel.addEventListener("click", dshHideSelectionUi);
+				remove.addEventListener("click", () => {
+					if (existingItem === null) return;
+					dshRemoveAnnotationById(existingItem.id);
+					dshHideSelectionUi();
+				});
+				const commit = () => {
+					const comment = textarea.value.trim();
+					if (existingItem !== null) {
+						const current = pendingAnnotations.find((item) => item.id === existingItem.id);
+						if (current !== undefined) current.annotation = comment;
+						dshPersistAnnotations();
+						dshRenderComposerChip();
+					}
+					else {
+						dshAddPendingAnnotation(comment);
+					}
+					dshHideSelectionUi();
+				};
+				save.addEventListener("click", commit);
+				textarea.addEventListener("keydown", (event) => {
+					if (event.key !== "Enter" || event.shiftKey || event.isComposing) return;
+					event.preventDefault();
+					commit();
+				});
+				if (existingItem !== null) actions.append(remove);
+				actions.append(cancel, save);
+				note.append(preview, textarea, actions);
+				document.body.appendChild(note);
+				selectionNote = note;
+				dshPlaceFloating(note, rect);
+				textarea.focus();
+			}
+			function dshShowSelectionPopover(event) {
+				window.setTimeout(() => {
+					if (event.target?.closest?.(".dsh-selection-popover,.dsh-selection-note,.dsh-annotation-chip,.dsh-annotation-preview,.dsh-selection-anchor") !== null) return;
+					if (dshSelectionEditable(event.target)) return;
+					const selection = window.getSelection?.();
+					const text = selection?.toString?.().trim() ?? "";
+					if (text.length < 1 || selection.rangeCount < 1) {
+						dshHideSelectionUi();
+						return;
+					}
+					const ancestor = selection.getRangeAt(0).commonAncestorContainer;
+					const element = ancestor.nodeType === Node.ELEMENT_NODE ? ancestor : ancestor.parentElement;
+					if (element?.closest?.("[data-chat-flow]") === null) return;
+					selectedText = text.length > 3000 ? text.slice(0, 3000) : text;
+					const rect = selection.getRangeAt(0).getBoundingClientRect();
+					if (rect.width <= 0 || rect.height <= 0) return;
+					selectedRect = { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom, width: rect.width, height: rect.height };
+					selectedRange = selection.getRangeAt(0).cloneRange();
+					selectionPopover?.remove();
+					selectionPopover = document.createElement("div");
+					selectionPopover.className = "dsh-selection-popover";
+					const copy = document.createElement("button");
+					copy.type = "button";
+					copy.textContent = "复制";
+					const annotate = document.createElement("button");
+					annotate.type = "button";
+					annotate.textContent = "添加注释";
+					for (const button of [copy, annotate]) {
+						button.addEventListener("pointerdown", (event) => {
+							event.preventDefault();
+							event.stopPropagation();
+						});
+					}
+					copy.addEventListener("click", () => {
+						navigator.clipboard?.writeText(selectedText);
+						dshHideSelectionUi();
+					});
+					annotate.addEventListener("click", (event) => {
+						event.preventDefault();
+						event.stopPropagation();
+						dshOpenSelectionNote(rect);
+					});
+					selectionPopover.append(copy, annotate);
+					document.body.appendChild(selectionPopover);
+					dshPlaceFloating(selectionPopover, rect);
+				}, 0);
+			}
+			dshLoadAnnotations();
+			window.setTimeout(dshRenderComposerChip, 50);
+			window.setTimeout(dshRenderEditAnnotationChip, 50);
+			window.setTimeout(dshDecorateHistoryAnnotations, 50);
+			document.addEventListener("mouseup", dshShowSelectionPopover, true);
+			document.addEventListener("keyup", (event) => {
+				if (event.key === "Escape") dshHideSelectionUi();
+				else dshShowSelectionPopover(event);
+			}, true);
+			document.addEventListener("keydown", (event) => {
+				if (event.key !== "Enter" || event.shiftKey || event.isComposing) return;
+				if (!(event.target instanceof HTMLTextAreaElement)) return;
+				if (event.target.closest(".dsh-selection-note") !== null) return;
+				dshPrepareTextareaForSubmit(event.target);
+			}, true);
+			document.addEventListener("pointerdown", (event) => {
+				const button = event.target?.closest?.("button");
+				if (button === null) return;
+				const textarea = dshVisibleTextarea();
+				const card = dshFindComposerCard(textarea);
+				if (button !== dshFindSubmitButton(card ?? document)) return;
+				dshPrepareTextareaForSubmit(textarea);
+			}, true);
+			document.addEventListener("click", (event) => {
+				const button = event.target?.closest?.("button");
+				if (button === null) return;
+				const textarea = dshVisibleTextarea();
+				const card = dshFindComposerCard(textarea);
+				if (button !== dshFindSubmitButton(card ?? document)) return;
+				dshPrepareTextareaForSubmit(textarea);
+			}, true);
+			document.addEventListener("click", (event) => {
+				if (event.target?.closest?.(".dsh-annotation-preview,.dsh-annotation-chip,.dsh-annotation-history-chip,.dsh-selection-anchor") !== null) return;
+				dshHideAnnotationPreview();
+			}, true);
+			document.addEventListener("mousedown", (event) => {
+				if (event.target?.closest?.(".dsh-selection-popover,.dsh-selection-note") !== null) return;
+				dshHideSelectionUi();
+			}, true);
+			window.addEventListener("scroll", () => {
+				dshHideSelectionUi();
+				dshQueueSelectionMarkerUpdate();
+			}, true);
+			window.addEventListener("resize", dshQueueSelectionMarkerUpdate);
+			window.visualViewport?.addEventListener("scroll", dshQueueSelectionMarkerUpdate);
+			window.visualViewport?.addEventListener("resize", dshQueueSelectionMarkerUpdate);
+			new MutationObserver(() => {
+				dshRenderComposerChip();
+				dshRenderEditAnnotationChip();
+				dshDecorateHistoryAnnotations();
+				dshSyncAnnotationSubmitState();
+				dshQueueSelectionMarkerUpdate();
+			}).observe(document.body, { childList: true, subtree: true, characterData: true });
+		}
+`;
+
+export function patchSelectionAnnotationSource(source) {
+  return replaceExactlyOnce(
+    source,
+    `\t\tfunction ChatView({ useSession, useSessions, useStore, renderSlot, sessionId, openFile, loadOlder, loadImage, inspectCall, chatScroll, forkAt, fileMentions, t }) {`,
+    `${SELECTION_ANNOTATION_RUNTIME_SOURCE}\t\tfunction ChatView({ useSession, useSessions, useStore, renderSlot, sessionId, openFile, loadOlder, loadImage, inspectCall, chatScroll, forkAt, fileMentions, t }) {`,
+    "选中文本批注运行时",
+  );
 }
 
 /** 为工作区 bundle 增加复制会话 ID 与带稳定 sessionId 的 @对话引用。 */

@@ -1,8 +1,8 @@
 function sourcePathTranslation(text) {
   const sourceRoot = text.match(/checkout is at (.+?)\. The checkout location/)?.[1];
   return sourceRoot === undefined
-    ? "DeepSeek Harness 的实现源码路径由当前运行环境提供。它与会话工作目录是两个独立位置，不要互相推断；只有在开发或检查 DSH 本身时才使用该源码。"
-    : `DeepSeek Harness 的实现源码位于 ${sourceRoot}。这个路径与当前会话工作目录是两个独立位置，不要互相推断；需要当前工作目录时使用相应工具确认。只有在开发或检查 DSH 本身时才使用该源码。`;
+    ? "DeepSeek Harness 的实现源码路径由当前运行环境提供。它与会话工作目录是两个独立位置，不要互相推断；只有在开发或检查 DSH 本身时才使用该源码。维护 DSH 时先分清源码工作区、生产运行 release 和用户数据目录，长期修改只写源码区，生产产物和用户数据只用于验证。"
+    : `DeepSeek Harness 的实现源码位于 ${sourceRoot}。这是 DSH 自身长期修改入口，不等于当前会话工作目录；需要当前工作目录时使用相应工具确认。维护 DSH 时先分清源码工作区、生产运行 release 和用户数据目录，长期修改只写源码区，生产产物和用户数据只用于验证。`;
 }
 
 function webSurfaceTranslation(text) {

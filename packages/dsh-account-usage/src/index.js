@@ -301,7 +301,6 @@ export class AccountUsageService {
     if (!policy) throw new RangeError(`unsupported account usage provider: ${providerId}`);
     const now = this.#clock();
     const cached = this.#cache.get(providerId);
-    if (forceRefresh && cached && now - cached.cachedAt < ACCOUNT_USAGE_REQUEST_DEDUP_MS) return cloneSnapshot(cached.snapshot);
     if (!forceRefresh && cached && now - cached.cachedAt < ACCOUNT_USAGE_CACHE_TTL_MS) return cloneSnapshot(cached.snapshot);
     const pending = this.#inFlight.get(providerId);
     if (pending) return cloneSnapshot(await pending);

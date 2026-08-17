@@ -176,8 +176,13 @@ test("高级区的档位拖动条只画真实档位，且用 range 承接拖动�
   assert.match(MODEL_MENU_STYLE, /\.dsh-ms-trigeffort\{font-size:12\.5px\}/u);
 });
 
-test("模型菜单样式保证子菜单侧开且窄窗口可回折", () => {
+test("模型菜单样式固定到视口并由组件钳制位置", () => {
   assert.match(MODEL_MENU_STYLE, /\.dsh-ms-wrap\{[^}]*flex-direction:row-reverse/u);
-  assert.match(MODEL_MENU_STYLE, /\.dsh-ms-wrap\{[^}]*flex-wrap:wrap-reverse/u);
+  assert.match(MODEL_MENU_STYLE, /\.dsh-ms-wrap\{position:fixed/u);
+  assert.match(MODEL_MENU_STYLE, /left:var\(--dsh-ms-left,8px\)/u);
+  assert.match(MODEL_MENU_STYLE, /top:var\(--dsh-ms-top,8px\)/u);
   assert.match(MODEL_MENU_STYLE, /\.dsh-ms-panel\{position:static!important/u);
+  assert.match(MODEL_SELECT_BROWSER_SOURCE, /const wrapRef = \(0, react\.useRef\)\(null\)/u);
+  assert.match(MODEL_SELECT_BROWSER_SOURCE, /const menuStyle = menuBox === null \? void 0 :/u);
+  assert.match(MODEL_SELECT_BROWSER_SOURCE, /requestAnimationFrame\(update\)/u);
 });

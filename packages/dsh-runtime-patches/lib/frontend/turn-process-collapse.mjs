@@ -5,8 +5,8 @@
  * 2026-08-16 18:18 选型、18:50 定形（`QUESTIONS.md` G6-2 / G7-2 / G7-3）：
  *
  *   const presentation = useProjection("turnPresentation")
- *   // { version:1, branchId, turns:[{ turnId, status, nodeKeys[], interruptKeys?,
- *   //    finalReplyFrom?, processStartedAt?, processEndedAt? }] }
+ *   // { version:1, branchId, turns:[{ turnId, status, originKey?, nodeKeys[],
+ *   //    interruptKeys?, finalReplyFrom?, processStartedAt?, processEndedAt? }] }
  *
  * ⛔ 只实现这一种形状。Codex 明确否掉「容错单对象 / 数组 / map 三形状 adapter」，
  * 读不出就整体 `off`，绝不做位置推断。
@@ -82,6 +82,7 @@ export function planTurnCollapse(turn) {
   }
   const turnId = typeof turn.turnId === "string" && turn.turnId !== "" ? turn.turnId : void 0;
   const status = turn.status === "running" || turn.status === "settled" || turn.status === "interrupted" ? turn.status : void 0;
+  const originKey = typeof turn.originKey === "string" && turn.originKey !== "" ? turn.originKey : void 0;
   const rawKeys = Array.isArray(turn.nodeKeys) ? turn.nodeKeys : null;
   let consistent = rawKeys !== null;
   const nodeKeys = [];
@@ -103,7 +104,7 @@ export function planTurnCollapse(turn) {
     interruptSeen.add(key);
     interruptKeys.push(key);
   }
-  const expanded = (reason) => ({ turnId, status, collapsible: false, processKeys: [], interruptKeys: [], replyKeys: consistent ? nodeKeys.slice() : [], durationText, reason });
+  const expanded = (reason) => ({ turnId, status, originKey, collapsible: false, processKeys: [], interruptKeys: [], replyKeys: consistent ? nodeKeys.slice() : [], durationText, reason });
   if (turnId === void 0) return expanded("no-turn-id");
   if (status === void 0) return expanded("invalid-status");
   if (status !== "settled") return expanded(status);
@@ -116,8 +117,8 @@ export function planTurnCollapse(turn) {
   const processKeys = nodeKeys.slice(0, index);
   const replyKeys = nodeKeys.slice(index);
   if (interruptKeys.some(key => !processKeys.includes(key))) return expanded("interrupt-outside-process");
-  if (processKeys.length === 0) return { turnId, status, collapsible: false, processKeys: [], interruptKeys: [], replyKeys, durationText, reason: "no-process" };
-  return { turnId, status, collapsible: true, processKeys, interruptKeys, replyKeys, durationText, reason: "collapsible" };
+  if (processKeys.length === 0) return { turnId, status, originKey, collapsible: false, processKeys: [], interruptKeys: [], replyKeys, durationText, reason: "no-process" };
+  return { turnId, status, originKey, collapsible: true, processKeys, interruptKeys, replyKeys, durationText, reason: "collapsible" };
 }
 
 /**
@@ -152,6 +153,8 @@ export function buildTurnFlowItems(order, activityFlow, controller) {
   const orderSet = new Set(order);
   const ownerByKey = new Map();
   const plans = [];
+  const originPlanByKey = new Map();
+  const anchoredPlans = new Set();
   for (const plan of controller.plans ?? []) {
     if (plan?.collapsible !== true) continue;
     const keys = [...plan.processKeys, ...plan.replyKeys];
@@ -161,6 +164,11 @@ export function buildTurnFlowItems(order, activityFlow, controller) {
       ownerByKey.set(key, plan);
     }
     plans.push(plan);
+    if (typeof plan.originKey === "string" && plan.originKey !== "" && orderSet.has(plan.originKey) && !keys.includes(plan.originKey)) {
+      if (originPlanByKey.has(plan.originKey)) return activityFlow;
+      originPlanByKey.set(plan.originKey, plan);
+      anchoredPlans.add(plan);
+    }
   }
   if (plans.length === 0) return activityFlow;
 
@@ -203,6 +211,7 @@ export function buildTurnFlowItems(order, activityFlow, controller) {
   for (const key of order) {
     const plan = ownerByKey.get(key);
     if (plan !== undefined) {
+      if (anchoredPlans.has(plan)) continue;
       if (!emittedTurns.has(plan)) {
         emittedTurns.add(plan);
         result.push(turnItemByPlan.get(plan));
@@ -217,6 +226,11 @@ export function buildTurnFlowItems(order, activityFlow, controller) {
       }
     } else {
       result.push({ type: "seat", key });
+    }
+    const anchoredPlan = originPlanByKey.get(key);
+    if (anchoredPlan !== undefined && !emittedTurns.has(anchoredPlan)) {
+      emittedTurns.add(anchoredPlan);
+      result.push(turnItemByPlan.get(anchoredPlan));
     }
   }
   return result;
