@@ -1,0 +1,55 @@
+{
+  "input": {
+    "contextGenerationId": "context-generation-fixture-1",
+    "sessionId": "session-fixture-1",
+    "shadowedSeqs": [10, 11, 12, 13],
+    "records": [
+      {
+        "recordId": "record-fixture-1",
+        "recordGenerationId": "record-generation-fixture-1",
+        "roundStart": 1,
+        "roundEnd": 1,
+        "detail": "full",
+        "sourceSeqs": [10, 11],
+        "content": "主人提出测试目标，助手确认按真实链路验证。",
+        "contentSha256": "39eae2a615f2c534cf34e0a42df4f6bbf85de26fa55beba6b7ae5b0867553181"
+      }
+    ],
+    "rawRounds": [
+      {
+        "round": 2,
+        "sourceSeqs": [12, 13],
+        "content": "用户：继续验证。\n助手：已收到。",
+        "contentSha256": "df54ebd6a83988dc0ee0bd074ed81501fe630b7b4d167963d54c266e72288612"
+      }
+    ],
+    "tokenBudget": { "contextWindow": 272000, "stablePrefixTokens": 156, "recentRawTokens": 3200, "reservedResponseTokens": 16000 }
+  },
+  "manifest": {
+    "protocolVersion": "dsh-memory-context-surface/v0",
+    "contextGenerationId": "context-generation-fixture-1",
+    "sessionId": "session-fixture-1",
+    "shadowedSeqs": [10, 11, 12, 13],
+    "records": [
+      {
+        "recordId": "record-fixture-1",
+        "recordGenerationId": "record-generation-fixture-1",
+        "roundStart": 1,
+        "roundEnd": 1,
+        "detail": "full",
+        "sourceSeqs": [10, 11],
+        "contentSha256": "39eae2a615f2c534cf34e0a42df4f6bbf85de26fa55beba6b7ae5b0867553181"
+      }
+    ],
+    "rawRounds": [
+      {
+        "round": 2,
+        "sourceSeqs": [12, 13],
+        "contentSha256": "df54ebd6a83988dc0ee0bd074ed81501fe630b7b4d167963d54c266e72288612"
+      }
+    ],
+    "tokenBudget": { "contextWindow": 272000, "stablePrefixTokens": 156, "recentRawTokens": 3200, "reservedResponseTokens": 16000 },
+    "stablePrefixSha256": "fce60438494550b3cd54a3c2164a49495c43dcf9db22e29a7c9ec74ae0e4e57d"
+  },
+  "contentSha256": "fce60438494550b3cd54a3c2164a49495c43dcf9db22e29a7c9ec74ae0e4e57d"
+}

@@ -1,0 +1,23 @@
+{
+  "name": "@deepseek-harness/dsh-account-usage",
+  "version": "0.0.0-candidate",
+  "private": true,
+  "type": "module",
+  "description": "DeepSeek Harness 的只读账户使用快照服务",
+  "exports": {
+    ".": "./src/plugin.js",
+    "./library": "./src/index.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "check": "node --check src/index.js && node --check src/plugin.js && node --check test/account-usage.test.js && node --check test/plugin.test.js",
+    "test": "node --test --test-concurrency=1 test/*.test.js",
+    "verify": "npm run check && npm test"
+  },
+  "peerDependencies": {
+    "@deepseek-harness/experimental-windsurf-provider": "0.0.0-candidate",
+    "@stardust/dsh-openai-codex-oauth": "0.1.0"
+  }
+}

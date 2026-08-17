@@ -1,0 +1,3 @@
+name: 主力模式
+description: 中文提示词、原生工具与 Code Mode SDK 同时可用的主力编码 Agent；官方标准模式仍保留为独立救援入口。
+order: 0

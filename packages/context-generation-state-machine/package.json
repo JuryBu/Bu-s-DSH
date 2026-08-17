@@ -1,0 +1,28 @@
+{
+  "name": "@dsh-experimental/context-generation-state-machine",
+  "version": "0.0.0-experimental.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./context-builder": "./src/context-builder.ts",
+    "./file-store": "./src/file-store.ts",
+    "./pipeline": "./src/pipeline.ts",
+    "./dsh-plugin": "./src/dsh-plugin.ts",
+    "./compaction-provider": "./src/compaction-provider.ts",
+    "./record-context-source": "./src/record-context-source.ts",
+    "./runtime-state": "./src/runtime-state.ts",
+    "./heat-scheduler": "./src/heat-scheduler.ts",
+    "./heat-integration": "./src/heat-integration.ts"
+  },
+  "scripts": {
+    "test": "node --experimental-strip-types --test test/*.test.ts"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/dsh-compaction": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-compaction-basic": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-llm": "^0.1.0-rc.6",
+    "@stardust/dsh-thread-tools": "0.0.0-candidate",
+    "@modelcontextprotocol/sdk": "^1.30.0"
+  }
+}

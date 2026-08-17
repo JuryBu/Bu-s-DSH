@@ -1,0 +1,26 @@
+{
+  "name": "@stardust/dsh-openai-codex-oauth",
+  "version": "0.1.0",
+  "description": "Local OpenAI Codex OAuth host integration for DeepSeek Harness",
+  "type": "module",
+  "main": "lib/index.js",
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  },
+  "exports": {
+    ".": "./lib/index.js",
+    "./catalog": "./lib/catalog.js",
+    "./store": "./lib/store.js",
+    "./package.json": "./package.json"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/dsh-atomic-write": "0.1.0-rc.6",
+    "@earendil-works/pi-ai": "0.82.1"
+  },
+  "devDependencies": {
+    "@deepseek-ai/dsh-atomic-write": "0.1.0-rc.6",
+    "@earendil-works/pi-ai": "0.82.1"
+  },
+  "private": true,
+  "license": "MIT"
+}

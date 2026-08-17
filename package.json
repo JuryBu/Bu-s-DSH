@@ -1,0 +1,21 @@
+{
+  "name": "deepseek-harness-local-enhancements",
+  "version": "0.1.0-dev",
+  "private": true,
+  "description": "DeepSeek Harness 本地增强的可重复构建、测试与候选发布工作区",
+  "packageManager": "npm@11.6.2",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "build:desktop": "dotnet build apps/desktop-shell/DeepSeekHarnessDesktop.csproj -c Release --nologo",
+    "build:candidate": "node scripts/Build-CandidateRelease.mjs",
+    "verify:candidate": "node scripts/Verify-CandidateRelease.mjs",
+    "test:candidate-context": "node scripts/Test-CandidateContextCompaction.mjs",
+    "test:candidate:mcp": "node scripts/Test-McpMultimodalCandidate.mjs",
+    "test:candidate:read-image": "node scripts/Test-ReadImageCapabilityCandidate.mjs",
+    "test:packages": "npm run test --workspaces --if-present",
+    "verify:source": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/Verify-SourceBaseline.ps1",
+    "verify": "npm run verify:source && npm run build:desktop && npm run test:packages"
+  }
+}

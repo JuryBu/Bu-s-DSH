@@ -1,0 +1,33 @@
+{
+  "name": "@deepseek-harness/experimental-windsurf-provider",
+  "version": "0.0.0-candidate",
+  "private": true,
+  "type": "module",
+  "description": "DeepSeek Harness 的 Windsurf/Devin OAuth、API Key 与原生流 Provider",
+  "main": "./src/plugin.js",
+  "exports": {
+    ".": "./src/plugin.js",
+    "./library": {
+      "types": "./src/index.d.ts",
+      "default": "./src/index.js"
+    },
+    "./provider": "./src/pi-provider.js",
+    "./runtime": "./src/runtime.js",
+    "./package.json": "./package.json"
+  },
+  "types": "./src/index.d.ts",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "check": "node --check src/errors.js && node --check src/feature-gate.js && node --check src/credentials.js && node --check src/auth.js && node --check src/catalog.js && node --check src/stream.js && node --check src/provider.js && node --check src/upstream.js && node --check src/runtime-store.js && node --check src/browser-token-import.js && node --check src/pi-provider.js && node --check src/runtime.js && node --check src/plugin.js && node --check src/index.js && node --check test/provider.test.js && node --check test/security.test.js && node --check test/runtime.test.js && node --check test/token-login.test.js && node --check test/plugin-security.test.js && node --check test/pi-provider.test.js",
+    "test": "node --test --test-concurrency=1 test/*.test.js",
+    "verify": "npm run check && npm test"
+  },
+  "dependencies": {
+    "opencode-windsurf-auth": "0.3.2"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "0.82.1"
+  }
+}

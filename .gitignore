@@ -1,0 +1,41 @@
+# Dependencies and generated builds
+node_modules/
+**/bin/
+**/obj/
+dist/
+coverage/
+release/
+
+# Local runtime and private data
+.dsh/
+state/
+logs/
+backups/
+*.dpapi
+*.token
+*.secret
+.env
+.env.*
+!.env.example
+
+# Temporary and editor files
+*.tmp
+*.temp
+*.log
+.vs/
+.vscode/
+.idea/
+Thumbs.db
+Desktop.ini
+
+# Private coordination and local evidence
+.codex/
+.windsurf/
+AGENTS.md
+Task.md
+plans/
+plans_codex/
+plans_windsurf/
+experiments/
+docs/
+packages/thread-tools/EXT-01-handoff-draft.md
