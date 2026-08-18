@@ -329,10 +329,35 @@ test("运行中真人消息既保留原始展开顺序，也提供折叠态固�
   assert.deepEqual(result[0].replyItems, [{ type: "seat", key: "reply" }]);
 });
 
-test("当前分页缺少该轮任一节点时不做半截折叠", () => {
+test("当前分页缺少最终正文节点时不做半截折叠", () => {
   const activityFlow = [{ type: "seat", key: "p1" }];
   const controller = turnCollapseController({ version: 1, branchId: "b1", turns: [settledTurn()] }, "backend");
   assert.equal(buildTurnFlowItems(["p1"], activityFlow, controller), activityFlow);
+});
+
+test("过程区缺少隐藏系统节点时仍折叠当前可见节点", () => {
+  const controller = turnCollapseController({
+    version: 1,
+    branchId: "b1",
+    turns: [settledTurn({
+      originKey: "human",
+      nodeKeys: ["hidden-system", "visible-process", "reply"],
+      finalReplyFrom: "reply",
+    })],
+  }, "backend");
+  const result = buildTurnFlowItems(
+    ["human", "visible-process", "reply"],
+    [
+      { type: "seat", key: "human" },
+      { type: "seat", key: "visible-process" },
+      { type: "seat", key: "reply" },
+    ],
+    controller,
+  );
+  assert.deepEqual(result.map(item => item.type), ["seat", "turn"]);
+  assert.equal(result[0].key, "human");
+  assert.deepEqual(result[1].processItems, [{ type: "seat", key: "visible-process" }]);
+  assert.deepEqual(result[1].replyItems, [{ type: "seat", key: "reply" }]);
 });
 
 test("最终正文节点里的真实 think 子节点移入过程区，并可无损放回", () => {

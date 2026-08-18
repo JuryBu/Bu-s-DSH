@@ -397,6 +397,11 @@ export class MemoryRecordCompactionEngine extends BasicCompactionEngine {
           "BUILD_FAILED",
         );
       }
+      try {
+        await this.compactIfNeeded(agent, "pressure", agent.session?.requestHeader?.()?.signal ?? new AbortController().signal);
+      } catch (error) {
+        this.ctx.logger?.warn?.(`BPC/硬压缩 pre-step 检查失败，继续执行：${error instanceof Error ? error.message : String(error)}`);
+      }
       return next();
     });
     ctx.effect(() => async () => this.close(), "Memory Context 后台任务清理");

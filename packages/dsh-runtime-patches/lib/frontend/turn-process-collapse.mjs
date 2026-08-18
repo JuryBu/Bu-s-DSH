@@ -146,7 +146,9 @@ export function turnCollapseController(projection, mode) {
 
 /**
  * 把 G1 的活动分组与轮级折叠合成一个渲染序列。
- * 投影缺失、节点交叉归属或当前分页没有完整加载该轮时保持原 activityFlow。
+ * 投影缺失、节点交叉归属或当前页缺少最终正文时保持原 activityFlow。
+ * 过程区可能含宿主不会渲染的系统/技能节点；这些节点只从当前可见折叠块中过滤，
+ * 不能让整轮折叠失效。
  */
 export function buildTurnFlowItems(order, activityFlow, controller) {
   if (!controller?.enabled || !Array.isArray(order) || !Array.isArray(activityFlow)) return activityFlow;
@@ -157,17 +159,22 @@ export function buildTurnFlowItems(order, activityFlow, controller) {
   const anchoredPlans = new Set();
   for (const plan of controller.plans ?? []) {
     if (plan?.collapsible !== true) continue;
-    const keys = [...plan.processKeys, ...plan.replyKeys];
-    if (keys.length === 0 || keys.some(key => !orderSet.has(key))) continue;
+    if (!Array.isArray(plan.replyKeys) || plan.replyKeys.length === 0 || !orderSet.has(plan.replyKeys[0])) continue;
+    const processKeys = Array.isArray(plan.processKeys) ? plan.processKeys.filter(key => orderSet.has(key)) : [];
+    const replyKeys = plan.replyKeys.filter(key => orderSet.has(key));
+    const interruptKeys = Array.isArray(plan.interruptKeys) ? plan.interruptKeys.filter(key => orderSet.has(key)) : [];
+    if (processKeys.length === 0) continue;
+    const visiblePlan = { ...plan, processKeys, replyKeys, interruptKeys };
+    const keys = [...processKeys, ...replyKeys];
     for (const key of keys) {
       if (ownerByKey.has(key)) return activityFlow;
-      ownerByKey.set(key, plan);
+      ownerByKey.set(key, visiblePlan);
     }
-    plans.push(plan);
+    plans.push(visiblePlan);
     if (typeof plan.originKey === "string" && plan.originKey !== "" && orderSet.has(plan.originKey) && !keys.includes(plan.originKey)) {
       if (originPlanByKey.has(plan.originKey)) return activityFlow;
-      originPlanByKey.set(plan.originKey, plan);
-      anchoredPlans.add(plan);
+      originPlanByKey.set(plan.originKey, visiblePlan);
+      anchoredPlans.add(visiblePlan);
     }
   }
   if (plans.length === 0) return activityFlow;

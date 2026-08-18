@@ -129,7 +129,7 @@ function installFixtureServices(ctx: Context): void {
 async function withEngine(
   roundCount: number,
   recordContextSource: { build(request: any): Promise<any> },
-  run: (engine: MemoryRecordCompactionEngine, agent: any, session: any) => Promise<void>,
+  run: (engine: MemoryRecordCompactionEngine, agent: any, session: any, ctx: Context) => Promise<void>,
 ): Promise<void> {
   const root = await mkdtemp(join(tmpdir(), "dsh-compaction-provider-"));
   const previousHome = process.env.DSH_HOME;
@@ -164,7 +164,7 @@ async function withEngine(
       async whenIdle() {},
     };
     engine = new MemoryRecordCompactionEngine(ctx, { auto: false, recordContextSource });
-    await run(engine, agent, session);
+    await run(engine, agent, session, ctx);
   } finally {
     if (originalCompactIdleRegion === undefined) delete basePrototype.compactIdleRegion;
     else basePrototype.compactIdleRegion = originalCompactIdleRegion;
@@ -178,6 +178,59 @@ async function withEngine(
     await rm(root, { recursive: true, force: true });
   }
 }
+
+test("agent/pre-step performs one pressure compaction check before continuing", async () => {
+  await withEngine(90, {
+    async build(request) {
+      return makeRecordResult(request);
+    },
+  }, async (engine, agent, _session, ctx) => {
+    const calls: Array<{ agent: any; trigger: string; signal: AbortSignal }> = [];
+    (engine as any).compactIfNeeded = async (seenAgent: any, trigger: string, signal: AbortSignal) => {
+      calls.push({ agent: seenAgent, trigger, signal });
+      return null;
+    };
+    let nextCalled = false;
+    const result = await (ctx as any).serial("agent/pre-step", { agent }, async () => {
+      nextCalled = true;
+      return "next-result";
+    });
+    assert.equal(result, "next-result");
+    assert.equal(nextCalled, true);
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0]!.agent, agent);
+    assert.equal(calls[0]!.trigger, "pressure");
+    assert.equal(calls[0]!.signal.aborted, false);
+  });
+});
+
+test("agent/pre-step keeps paused sessions blocked before compaction", async () => {
+  await withEngine(90, {
+    async build(request) {
+      return makeRecordResult(request);
+    },
+  }, async (engine, agent, session, ctx) => {
+    await (engine as any).runtimeStates.update(session.id, (state: any) => ({
+      ...state,
+      paused: true,
+      pauseReason: "fixture hard failure",
+    }));
+    let compactCalled = false;
+    (engine as any).compactIfNeeded = async () => {
+      compactCalled = true;
+      return null;
+    };
+    let nextCalled = false;
+    await assert.rejects(
+      () => (ctx as any).serial("agent/pre-step", { agent }, async () => {
+        nextCalled = true;
+      }),
+      /fixture hard failure/,
+    );
+    assert.equal(compactCalled, false);
+    assert.equal(nextCalled, false);
+  });
+});
 
 test("hard compaction keeps a source-unavailable failed round in the raw tail", async () => {
   const requestedRoundEnds: number[] = [];
