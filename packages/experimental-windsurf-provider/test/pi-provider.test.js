@@ -53,6 +53,42 @@ test("文本模型在上游请求映射前移除视觉工具 schema，视觉模�
   assert.equal(isWindsurfVisionTool({ name: "inspect_image" }), true);
 });
 
+test("Windsurf 上游请求保留用户和工具结果图片的 base64Data 与 MIME", () => {
+  const mapped = mapWindsurfContext({
+    messages: [
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "看图" },
+          { type: "image", mimeType: "image/png", data: "AAA" },
+        ],
+      },
+      {
+        role: "toolResult",
+        toolCallId: "call-1",
+        content: [
+          { type: "image", mimeType: "image/jpeg", data: "BBB" },
+          { type: "text", text: "工具说明" },
+        ],
+      },
+    ],
+    tools: []
+  }, { input: ["text", "image"] });
+
+  assert.deepEqual(mapped.messages[0].content, [
+    { type: "text", text: "看图" },
+    { type: "image", mimeType: "image/png", base64Data: "AAA" },
+  ]);
+  assert.deepEqual(mapped.messages[1], {
+    role: "tool",
+    tool_call_id: "call-1",
+    content: [
+      { type: "image", mimeType: "image/jpeg", base64Data: "BBB" },
+      { type: "text", text: "工具说明" },
+    ],
+  });
+});
+
 test("GLM 默认目录使用 200K，上游 1M 变体再单独提升窗口", () => {
   resetWindsurfRuntimeCaches();
   const glm = createWindsurfPiProvider().getModels().find(model => model.id === "glm-5-2-max");

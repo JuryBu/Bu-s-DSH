@@ -1275,8 +1275,16 @@ function supportsFastModel(model) {
 \treturn Array.isArray(model.stardustServiceTiers) && model.stardustServiceTiers.some((tier) => tier?.id === "priority");
 }
 function requestOptionsForModel(options, model) {
-\tif (model.input.includes("image")) return options;
 \tconst isVisionTool = (tool) => tool?.name === "read_image" || tool?.name === "view_image" || tool?.name === "inspect_image" || tool?.requiresVision === true || tool?.requires_vision === true || Array.isArray(tool?.inputModalities) && tool.inputModalities.includes("image");
+\tconst hasDirectImage = options.messages?.some((message) => contentHasImage(message.content)) === true;
+\tif (model.input.includes("image")) {
+\t\tif (!hasDirectImage) return options;
+\t\tconst tools = options.tools?.filter((tool) => !isVisionTool(tool));
+\t\treturn {
+\t\t\t...options,
+\t\t\t...tools === void 0 ? {} : { tools }
+\t\t};
+\t}
 \tconst tools = options.tools?.filter((tool) => !isVisionTool(tool));
 \tconst imagePlaceholder = "[图片已在本次非视觉模型请求中暂时省略；原会话中的图片仍然保留]";
 \tconst sanitizeBlocks = (blocks) => Array.isArray(blocks) ? blocks.map((part) => {

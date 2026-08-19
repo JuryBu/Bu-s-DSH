@@ -126,6 +126,15 @@ function installFixtureServices(ctx: Context): void {
   new FixtureCommands();
 }
 
+function scaleTokenMeter(ctx: Context, tokensPerNode: number): void {
+  const meter = (ctx as any).get("tokenMeter");
+  meter.measure = (session: any) => ({
+    totalTokens: session.surface.nodes.length * tokensPerNode,
+    nodes: session.surface.nodes.map((seq: number) => ({ seq, tokens: tokensPerNode })),
+  });
+  meter.estimateMessage = () => tokensPerNode;
+}
+
 async function withEngine(
   roundCount: number,
   recordContextSource: { build(request: any): Promise<any> },
@@ -232,6 +241,30 @@ test("agent/pre-step keeps paused sessions blocked before compaction", async () 
   });
 });
 
+test("agent/pre-step stops after an in-step hard compaction failure pauses the session", async () => {
+  let attempts = 0;
+  await withEngine(115, {
+    async build() {
+      attempts += 1;
+      throw new Error(`fixture hard pre-step failure ${attempts}`);
+    },
+  }, async (engine, agent, session, ctx) => {
+    let nextCalled = false;
+    await assert.rejects(
+      () => (ctx as any).serial("agent/pre-step", { agent }, async () => {
+        nextCalled = true;
+        return "should-not-run";
+      }),
+      /上下文硬压缩失败后已暂停保护/,
+    );
+    const state = await engine.inspectRecovery(session.id);
+    assert.equal(nextCalled, false);
+    assert.equal(attempts, 3);
+    assert.equal(state.paused, true);
+    assert.match(state.pauseReason ?? "", /fixture hard pre-step failure 3/);
+  });
+});
+
 test("hard compaction keeps a source-unavailable failed round in the raw tail", async () => {
   const requestedRoundEnds: number[] = [];
   await withEngine(120, {
@@ -293,6 +326,103 @@ test("BPC keeps its snapshot while raw tail grows and atomically applies as soon
     assert.equal((await engine.inspectRecovery(session.id)).prepared, undefined);
     assert.equal((await engine.inspectRecovery(session.id)).compactionActivity, undefined);
     assert.ok(Number.isFinite((await engine.inspectRecovery(session.id)).lastPublishedAt));
+  });
+});
+
+test("pressure compaction uses the 68 percent BPC and 90 percent hard thresholds", async () => {
+  await withEngine(67, {
+    async build() {
+      throw new Error("67 percent must stay below the BPC threshold");
+    },
+  }, async (engine, agent, session, ctx) => {
+    scaleTokenMeter(ctx, 1000);
+    session.requestContext = () => ({ contextWindow: 100_000 });
+    assert.equal(await engine.compactIfNeeded(agent, "pressure", new AbortController().signal), null);
+    assert.equal((engine as any).inFlight.has(session.id), false);
+  });
+
+  for (const roundCount of [68, 89]) {
+    let releaseBuild!: () => void;
+    const buildGate = new Promise<void>(resolve => { releaseBuild = resolve; });
+    let buildStarted!: () => void;
+    const started = new Promise<void>(resolve => { buildStarted = resolve; });
+    await withEngine(roundCount, {
+      async build(request) {
+        buildStarted();
+        await buildGate;
+        return makeRecordResult(request);
+      },
+    }, async (engine, agent, session, ctx) => {
+      scaleTokenMeter(ctx, 1000);
+      session.requestContext = () => ({ contextWindow: 100_000 });
+      assert.equal(await engine.compactIfNeeded(agent, "pressure", new AbortController().signal), null);
+      await started;
+      const background = (engine as any).inFlight.get(session.id)?.promise as Promise<unknown> | undefined;
+      assert.ok(background !== undefined, `${roundCount} percent should build a background BPC generation`);
+      releaseBuild();
+      await background;
+      const scheduled = (engine as any).scheduledApplies.get(session.id);
+      assert.ok(scheduled !== undefined, `${roundCount} percent BPC should be scheduled for idle apply`);
+      await scheduled.promise;
+      assert.equal((await engine.inspectRecovery(session.id)).paused, false);
+    });
+  }
+
+  await withEngine(90, {
+    async build(request) {
+      return makeRecordResult(request);
+    },
+  }, async (engine, agent, session, ctx) => {
+    scaleTokenMeter(ctx, 1000);
+    session.requestContext = () => ({ contextWindow: 100_000 });
+    const result = await engine.compactIfNeeded(agent, "pressure", new AbortController().signal);
+    assert.ok(result !== null);
+    assert.equal((engine as any).inFlight.has(session.id), false);
+    assert.equal((await engine.inspectRecovery(session.id)).paused, false);
+  });
+});
+
+test("pressure compaction recalculates ratios after switching to a smaller context window", async () => {
+  let contextWindow = 200_000;
+  let releaseBuild!: () => void;
+  const buildGate = new Promise<void>(resolve => { releaseBuild = resolve; });
+  let buildStarted!: () => void;
+  const started = new Promise<void>(resolve => { buildStarted = resolve; });
+  await withEngine(80, {
+    async build(request) {
+      buildStarted();
+      await buildGate;
+      return makeRecordResult(request);
+    },
+  }, async (engine, agent, session, ctx) => {
+    scaleTokenMeter(ctx, 1000);
+    session.requestContext = () => ({ contextWindow });
+    assert.equal(await engine.compactIfNeeded(agent, "pressure", new AbortController().signal), null);
+    assert.equal((engine as any).inFlight.has(session.id), false);
+
+    contextWindow = 100_000;
+    assert.equal(await engine.compactIfNeeded(agent, "pressure", new AbortController().signal), null);
+    await started;
+    const background = (engine as any).inFlight.get(session.id)?.promise as Promise<unknown> | undefined;
+    assert.ok(background !== undefined);
+    releaseBuild();
+    await background;
+    const scheduled = (engine as any).scheduledApplies.get(session.id);
+    assert.ok(scheduled !== undefined);
+    await scheduled.promise;
+  });
+
+  contextWindow = 88_000;
+  await withEngine(80, {
+    async build(request) {
+      return makeRecordResult(request);
+    },
+  }, async (engine, agent, session, ctx) => {
+    scaleTokenMeter(ctx, 1000);
+    session.requestContext = () => ({ contextWindow });
+    const result = await engine.compactIfNeeded(agent, "pressure", new AbortController().signal);
+    assert.ok(result !== null);
+    assert.equal((await engine.inspectRecovery(session.id)).paused, false);
   });
 });
 
@@ -379,10 +509,9 @@ test("hard compaction treats an official non-shrinking summary as a retryable po
       return makeRecordResult(request);
     },
   }, async (engine, agent, session) => {
-    const basePrototype = Object.getPrototypeOf(MemoryRecordCompactionEngine.prototype) as Record<string, any>;
-    const originalCompactIfNeeded = basePrototype.compactIfNeeded;
+    const originalCompactRegion = engine.compactRegion.bind(engine);
     let attempts = 0;
-    basePrototype.compactIfNeeded = async () => {
+    (engine as any).compactRegion = async (...args: any[]) => {
       attempts += 1;
       if (attempts === 1) {
         session.surface.replaceGeneration += 1;
@@ -390,16 +519,16 @@ test("hard compaction treats an official non-shrinking summary as a retryable po
         (engine as any).noteHardAttemptPublication(agent, agent.contextGenerationId);
         throw new Error("summary is not smaller than the shadowed content (2619 estimated framed tokens >= 2619)");
       }
-      return { retried: true };
+      return originalCompactRegion(...args);
     };
     try {
       const result = await engine.compactIfNeeded(agent, "pressure", new AbortController().signal);
       assert.ok(result !== null);
-      assert.equal(attempts, 1);
+      assert.equal(attempts, 2);
       assert.ok(session.surface.replaceGeneration >= 2);
       assert.equal((await engine.inspectRecovery(session.id)).paused, false);
     } finally {
-      basePrototype.compactIfNeeded = originalCompactIfNeeded;
+      (engine as any).compactRegion = originalCompactRegion;
     }
   });
 });
@@ -410,9 +539,8 @@ test("hard compaction rejects an external replacement even when both generation 
       return makeRecordResult(request);
     },
   }, async (engine, agent, session) => {
-    const basePrototype = Object.getPrototypeOf(MemoryRecordCompactionEngine.prototype) as Record<string, any>;
-    const originalCompactIfNeeded = basePrototype.compactIfNeeded;
-    basePrototype.compactIfNeeded = async () => {
+    const originalCompactRegion = engine.compactRegion.bind(engine);
+    (engine as any).compactRegion = async () => {
       session.surface.replaceGeneration += 1;
       agent.contextGenerationId = "fixture-external-generation";
       throw new ContextGenerationError("fixture external replacement", "BUDGET_EXCEEDED");
@@ -424,7 +552,7 @@ test("hard compaction rejects an external replacement even when both generation 
       );
       assert.equal((await engine.inspectRecovery(session.id)).paused, false);
     } finally {
-      basePrototype.compactIfNeeded = originalCompactIfNeeded;
+      (engine as any).compactRegion = originalCompactRegion;
     }
   });
 });

@@ -400,6 +400,13 @@ export class MemoryRecordCompactionEngine extends BasicCompactionEngine {
       try {
         await this.compactIfNeeded(agent, "pressure", agent.session?.requestHeader?.()?.signal ?? new AbortController().signal);
       } catch (error) {
+        const latestState = await this.runtimeStates.load(String(agent.session.id));
+        if (latestState.paused) {
+          throw new ContextGenerationError(
+            `上下文硬压缩失败后已暂停保护：${latestState.pauseReason ?? errorChainMessage(error)}。确认现场安全后可输入 /context-recover <恢复原因> 继续。`,
+            "BUILD_FAILED",
+          );
+        }
         this.ctx.logger?.warn?.(`BPC/硬压缩 pre-step 检查失败，继续执行：${error instanceof Error ? error.message : String(error)}`);
       }
       return next();
@@ -948,7 +955,7 @@ export class MemoryRecordCompactionEngine extends BasicCompactionEngine {
         };
         try {
           return await this.hardAttemptContext.run(attemptPublication, async () => {
-            if (trigger === "pressure" && budgetRetryLevel > 0) {
+            if (trigger === "pressure") {
               const contextWindow = await this.contextWindow(agent, signal);
               const retainedTokens = hardRetainTokensForRetry(contextWindow, budgetRetryLevel);
               const measurement = this.ctx.tokenMeter.measure(agent.session);

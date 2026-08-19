@@ -4,6 +4,7 @@ import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
 
 import { readWindsurfCredential, windsurfApiKeyAuth } from "./runtime.js";
 import { loadWindsurfUpstream } from "./upstream.js";
+import { isWindsurfImageAttachmentModel } from "./capabilities.js";
 
 const PROVIDER_ID = "windsurf";
 const DEFAULT_HOST = "https://server.codeium.com";
@@ -161,7 +162,7 @@ function piModel(modelUid, label, capability = {}) {
     provider: PROVIDER_ID,
     baseUrl: DEFAULT_HOST,
     reasoning: false,
-    input: capability.supportsVision === true ? ["text", "image"] : ["text"],
+    input: capability.supportsVision === true && isWindsurfImageAttachmentModel(modelUid) ? ["text", "image"] : ["text"],
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     contextWindow,
     maxTokens,

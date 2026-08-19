@@ -47,6 +47,7 @@ const COMPACTION_SOURCE = `
 		const STARDUST_COMPACTION_PHASES = {
 			building: { text: "后台整理中", tone: "active" },
 			prepared: { text: "候选已就绪", tone: "ready" },
+			applying: { text: "正在换入新上下文", tone: "active" },
 			applied: { text: "已换入新上下文", tone: "ready" },
 			failed: { text: "整理失败", tone: "error" },
 			retrying: { text: "退避重试中", tone: "warn" },
@@ -64,33 +65,60 @@ const COMPACTION_SOURCE = `
 		function stardustCompactionNumber(value) {
 			return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null;
 		}
+		function stardustCompactionLabel(value) {
+			if (typeof value === "number" && Number.isFinite(value) && value >= 0) return String(value);
+			if (typeof value === "string" && value.trim().length > 0) return value.trim();
+			return null;
+		}
 		function stardustCompactionFirst(snapshot, keys) {
+			if (typeof snapshot !== "object" || snapshot === null || Array.isArray(snapshot)) return void 0;
 			for (const key of keys) {
 				const value = snapshot[key];
 				if (value !== null && value !== void 0) return value;
 			}
 			return void 0;
 		}
+		function stardustCompactionActivity(snapshot) {
+			const activity = stardustCompactionFirst(snapshot, ["compactionActivity", "activity", "currentActivity"]);
+			return typeof activity === "object" && activity !== null && !Array.isArray(activity) ? activity : null;
+		}
+		function stardustCompactionError(value) {
+			if (typeof value === "string" && value.trim().length > 0) return value.trim().split(/\\r?\\n/u)[0];
+			if (typeof value === "object" && value !== null) {
+				const nested = stardustCompactionFirst(value, ["message", "reason", "error", "summary"]);
+				if (typeof nested === "string" && nested.trim().length > 0) return nested.trim().split(/\\r?\\n/u)[0];
+			}
+			return null;
+		}
 		function stardustCompactionView(snapshot) {
 			if (typeof snapshot !== "object" || snapshot === null || Array.isArray(snapshot)) return { phase: void 0 };
-			const rawPhase = stardustCompactionFirst(snapshot, ["phase", "state", "status"]);
+			const activity = stardustCompactionActivity(snapshot);
+			const rawPhase = stardustCompactionFirst(activity, ["phase", "state", "status"])
+				?? stardustCompactionFirst(snapshot, ["phase", "state", "status"]);
 			const paused = stardustCompactionFirst(snapshot, ["paused"]) === true;
-			const phaseKey = paused ? "paused" : typeof rawPhase === "string" ? rawPhase : void 0;
-			const mode = stardustCompactionFirst(snapshot, ["mode", "kind", "reason"]);
+			const rawMode = stardustCompactionFirst(activity, ["mode", "kind", "reason", "trigger"])
+				?? stardustCompactionFirst(snapshot, ["mode", "kind", "reason", "trigger"]);
+			const phaseKey = (() => {
+				if (paused) return "paused";
+				if (typeof rawPhase !== "string") return void 0;
+				if (rawPhase === "building" && (rawMode === "hard" || rawMode === "hard-compaction")) return "hard-building";
+				if (rawPhase === "building" && (rawMode === "bpc" || rawMode === "background")) return "bpc-building";
+				return rawPhase;
+			})();
 			const blocking = stardustCompactionFirst(snapshot, ["blocking", "blocked", "blockingRequest"]) === true
+				|| stardustCompactionFirst(activity, ["blocking", "blocked", "blockingRequest"]) === true
 				|| phaseKey === "hard-building";
+			const generation = stardustCompactionLabel(stardustCompactionFirst(activity, ["generation", "generationId"])
+				?? stardustCompactionFirst(snapshot, ["generation", "generationId", "publishedGenerationId"])
+				?? stardustCompactionFirst(stardustCompactionFirst(snapshot, ["prepared", "candidate"]), ["generation", "generationId"]));
+			const lastError = stardustCompactionError(stardustCompactionFirst(snapshot, ["lastBpcFailure", "lastHardFailure", "lastError", "error", "errorMessage", "pauseReason"]));
 			return {
 				phase: phaseKey === void 0 ? void 0 : STARDUST_COMPACTION_PHASES[phaseKey],
-				generation: stardustCompactionNumber(stardustCompactionFirst(snapshot, ["generation", "generationId"])),
-				retries: stardustCompactionNumber(stardustCompactionFirst(snapshot, ["retryCount", "retries", "attempt"])),
-				lastError: (() => {
-					const value = stardustCompactionFirst(snapshot, ["lastError", "error", "errorMessage"]);
-					if (typeof value === "string" && value.trim().length > 0) return value.trim().split(/\\r?\\n/u)[0];
-					if (typeof value === "object" && value !== null && typeof value.message === "string") return value.message.split(/\\r?\\n/u)[0];
-					return null;
-				})(),
+				generation,
+				retries: stardustCompactionNumber(stardustCompactionFirst(snapshot, ["bpcFailureCount", "hardFailureCount", "retryCount", "retries", "attempt"])),
+				lastError,
 				blocking,
-				mode: mode === "hard" || mode === "hard-compaction" ? "hard" : mode === "bpc" || mode === "background" ? "bpc" : void 0
+				mode: rawMode === "hard" || rawMode === "hard-compaction" || phaseKey === "hard-building" ? "hard" : rawMode === "bpc" || rawMode === "background" || phaseKey === "bpc-building" ? "bpc" : void 0
 			};
 		}
 		function StardustCompactionStatus({ useProjection }) {

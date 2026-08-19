@@ -60,6 +60,15 @@ test("上下文状态卡补丁唯一命中，并把压缩状态区挂进面板",
   assertSyntaxOk("conversation-context-card", patched);
 });
 
+test("压缩状态卡读取真实运行态活动字段", { skip: !baselineAvailable }, () => {
+  const patched = patchContextStatusCardSource(baselineSource("dsh-client-ui-conversation"));
+  assert.match(patched, /compactionActivity/u);
+  assert.match(patched, /applying: \{ text: "正在换入新上下文"/u);
+  assert.match(patched, /generationId/u);
+  assert.match(patched, /bpcFailureCount/u);
+  assert.match(patched, /lastBpcFailure|lastHardFailure/u);
+});
+
 test("上下文状态卡与主线上下文阈值补丁顺序可交换", { skip: !baselineAvailable }, async () => {
   const { patchContextMeterThresholdsSource } = await import("../lib/transforms.mjs");
   const source = baselineSource("dsh-client-ui-conversation");

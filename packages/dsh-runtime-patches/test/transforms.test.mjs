@@ -499,7 +499,9 @@ test("真实 pi-ai 适配器按账号目录暴露推理档位与受支持的 Fas
   assert.match(result, /const requestOptions = requestOptionsForModel\(options, model\)/);
   assert.match(result, /toPiContext\(requestOptions\)/);
   assert.match(result, /event\.error\.usage !== void 0/);
-  assert.doesNotMatch(result, /async resolveModel\(provider, model, signal\)[\s\S]*?await refreshDynamicModels\(snapshot, provider, signal\)/);
+  const resolveModelSection = result.slice(result.indexOf("async resolveModel(provider, model"), result.indexOf("async *stream(options)"));
+  assert.doesNotMatch(resolveModelSection, /refreshDynamicModels/);
+  assert.match(result, /async \*stream\(options\)[\s\S]*?await refreshDynamicModels\(snapshot, options\.provider, options\.signal\)/);
  });
 
 test("真实候选 pi-ai request 选项按模型输入能力过滤视觉工具", { skip: !candidateRoot }, async () => {
@@ -523,6 +525,14 @@ test("真实候选 pi-ai request 选项按模型输入能力过滤视觉工具",
   const visionResult = requestOptionsForModel(options, { id: "vision-model", input: ["text", "image"] });
   assert.equal(visionResult, options);
   assert.deepEqual(visionResult.tools, definitions);
+  const directImageOptions = {
+    ...options,
+    messages: [{ role: "user", content: [{ type: "image", attachment: { attachmentId: "sha256:x", mediaType: "image/png" } }] }],
+  };
+  const visionWithDirectImage = requestOptionsForModel(directImageOptions, { id: "vision-model", input: ["text", "image"] });
+  assert.notEqual(visionWithDirectImage, directImageOptions);
+  assert.equal(visionWithDirectImage.messages, directImageOptions.messages);
+  assert.deepEqual(visionWithDirectImage.tools.map((tool) => tool.name), ["read_file"]);
 });
 
 test("Fast 重放只接受同提供方的 fast 别名与基础模型，不放宽其它模型", () => {

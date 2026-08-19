@@ -1,4 +1,5 @@
 import { ProviderBoundaryError } from "./errors.js";
+import { isWindsurfImageAttachmentModel } from "./capabilities.js";
 
 const reasoningLevels = new Set(["minimal", "low", "medium", "high", "xhigh", "max", "ultra"]);
 
@@ -31,7 +32,7 @@ function normalizeAvailability(disabled) {
   return "unknown";
 }
 
-function normalizeCapabilityEvidence(value, catalogObservedAt) {
+function normalizeCapabilityEvidence(value, catalogObservedAt, modelUid) {
   if (!value || value.authority !== "realtime") {
     return {
       authority: "unknown",
@@ -53,7 +54,7 @@ function normalizeCapabilityEvidence(value, catalogObservedAt) {
     authority: "realtime",
     observedAt: normalizeTime(value.observedAt ?? catalogObservedAt, "invalid_capability_observed_at"),
     contextWindowTokens,
-    input: value.supportsVision === true ? ["text", "image"] : ["text"],
+    input: value.supportsVision === true && isWindsurfImageAttachmentModel(modelUid) ? ["text", "image"] : ["text"],
     reasoningLevels: ["off", ...normalizedLevels]
   };
 }
@@ -114,7 +115,7 @@ export class DynamicModelCatalog {
       const resolvedCapability = this.#capabilityResolver && typeof this.#capabilityResolver.resolve === "function"
         ? await this.#capabilityResolver.resolve({ modelUid, label, catalogSource, catalogObservedAt, signal })
         : undefined;
-      const capability = normalizeCapabilityEvidence(resolvedCapability, catalogObservedAt);
+      const capability = normalizeCapabilityEvidence(resolvedCapability, catalogObservedAt, modelUid);
 
       records.set(modelUid, {
         modelUid,

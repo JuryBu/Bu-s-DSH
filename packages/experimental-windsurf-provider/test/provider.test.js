@@ -153,10 +153,11 @@ test("OAuth 与手动 API Key 独立保存且重复 OAuth 必须再次拉起浏�
   assert.equal(catalog.requests[0].apiKey, "fake-oauth-key-2");
 });
 
-test("目录只信任实时 UID、标签和 disabled，能力未知时保守为文本", async () => {
+test("目录能力必须同时经过 Windsurf 图片附件模型表，能力未知时保守为文本", async () => {
   const store = new InMemoryFakeCredentialStore();
   const catalog = fakeCatalog([
-    { modelUid: "visual-live", label: "Visual Live", disabled: false },
+    { modelUid: "gemini-3-1-pro-high", label: "Gemini 3.1 Pro High", disabled: false },
+    { modelUid: "grok-4-5", label: "Grok 4.5", disabled: false },
     { modelUid: "unknown-static", label: "Unknown Static" },
     { modelUid: "disabled", label: "Disabled", disabled: true }
   ]);
@@ -168,7 +169,7 @@ test("目录只信任实时 UID、标签和 disabled，能力未知时保守为�
     catalogSource: catalog.source,
     capabilityResolver: {
       async resolve({ modelUid }) {
-        if (modelUid === "visual-live") {
+        if (modelUid === "gemini-3-1-pro-high" || modelUid === "grok-4-5") {
           return {
             authority: "realtime",
             observedAt: "2026-08-14T12:35:01.000Z",
@@ -191,7 +192,8 @@ test("目录只信任实时 UID、标签和 disabled，能力未知时保守为�
 
   await provider.manualApiKey.save({ apiKey: "fake-catalog-key" });
   const models = await provider.refreshModels();
-  const live = models.find((model) => model.modelUid === "visual-live");
+  const live = models.find((model) => model.modelUid === "gemini-3-1-pro-high");
+  const grok = models.find((model) => model.modelUid === "grok-4-5");
   const unknown = models.find((model) => model.modelUid === "unknown-static");
   const disabled = models.find((model) => model.modelUid === "disabled");
 
@@ -200,6 +202,8 @@ test("目录只信任实时 UID、标签和 disabled，能力未知时保守为�
   assert.equal(live.contextWindowTokens, 128000);
   assert.deepEqual(live.reasoningLevels, ["off", "low", "high"]);
   assert.equal(live.source.capabilityAuthority, "realtime");
+  assert.deepEqual(grok.input, ["text"]);
+  assert.equal(grok.source.capabilityAuthority, "realtime");
   assert.deepEqual(unknown.input, ["text"]);
   assert.equal(unknown.contextWindowTokens, null);
   assert.deepEqual(unknown.reasoningLevels, ["off"]);
