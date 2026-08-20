@@ -19,7 +19,7 @@ function replaceExactlyOnce(source, before, after, label) {
   if (first < 0 || first !== last) {
     throw new Error(`${label} 与受支持的 DSH 0.1.0-rc.6 结构不一致，停止修改候选版本`);
   }
-  return source.replace(before, after);
+  return source.replace(before, () => after);
 }
 
 /* ==================== G1 区：纯逻辑（可单测，注入后同名可用） ==================== */
@@ -509,14 +509,51 @@ const SELECTION_ANNOTATION_RUNTIME_SOURCE = `
 			let selectedText = "";
 			let selectedRect = null;
 			let selectedRange = null;
+			let selectedSourceKey = null;
+			let selectedSourceKind = null;
 			let nextAnnotationId = 1;
 			let pendingAnnotations = [];
 			let selectionMarkerRecords = [];
 			let editSelectionMarkerRecords = [];
 			let editAnnotationSignature = null;
+			let draftMarkerSignature = null;
 			let markerUpdateQueued = false;
 			let pendingSubmitSignature = null;
-			const DSH_ANNOTATION_STORAGE_KEY = "__dsh_selection_annotations:" + location.pathname + location.search;
+			let activeAnnotationSessionId = null;
+			const DSH_ANNOTATION_STORAGE_PREFIX = "__dsh_selection_annotations:";
+			const DSH_LEGACY_ANNOTATION_STORAGE_KEY = DSH_ANNOTATION_STORAGE_PREFIX + location.pathname + location.search;
+			function dshCurrentSessionId() {
+				try {
+					const parsed = JSON.parse(localStorage.getItem("dsh.sessions.current") ?? "{}");
+					if (typeof parsed?.sessionId === "string" && parsed.sessionId.trim() !== "") return parsed.sessionId.trim();
+				} catch {}
+				const selectedRow = document.querySelector('.YDXeBa_sessionRow[aria-selected="true"], .YDXeBa_sessionRow.YDXeBa_selected');
+				const label = selectedRow?.textContent?.trim();
+				if (typeof label === "string" && label !== "") return "row:" + label;
+				return "url:" + location.pathname + location.search;
+			}
+			function dshAnnotationStorageKey(sessionId = activeAnnotationSessionId ?? dshCurrentSessionId()) {
+				return DSH_ANNOTATION_STORAGE_PREFIX + encodeURIComponent(sessionId);
+			}
+			function dshCssEscape(value) {
+				if (typeof CSS !== "undefined" && typeof CSS.escape === "function") return CSS.escape(value);
+				return String(value).replace(/["\\\\]/g, "\\$&");
+			}
+			function dshNormalizeStoredAnnotations(raw) {
+				try {
+					const parsed = JSON.parse(raw);
+					if (!Array.isArray(parsed)) return [];
+					return parsed.filter((item) => typeof item?.text === "string").map((item) => ({
+						id: Number.isSafeInteger(item.id) ? item.id : nextAnnotationId++,
+						text: item.text,
+						annotation: typeof item.annotation === "string" ? item.annotation : "",
+						sourceKey: typeof item.sourceKey === "string" && item.sourceKey !== "" ? item.sourceKey : null,
+						sourceKind: typeof item.sourceKind === "string" && item.sourceKind !== "" ? item.sourceKind : null
+					}));
+				} catch {
+					return [];
+				}
+			}
 			function dshHideSelectionUi() {
 				selectionPopover?.remove();
 				selectionPopover = null;
@@ -548,26 +585,58 @@ const SELECTION_ANNOTATION_RUNTIME_SOURCE = `
 				textarea.focus();
 			}
 			function dshLoadAnnotations() {
+				const sessionId = activeAnnotationSessionId ?? dshCurrentSessionId();
+				activeAnnotationSessionId = sessionId;
+				const key = dshAnnotationStorageKey(sessionId);
 				try {
-					const value = sessionStorage.getItem(DSH_ANNOTATION_STORAGE_KEY);
-					if (value === null) return;
-					const parsed = JSON.parse(value);
-					if (!Array.isArray(parsed)) return;
-				pendingAnnotations = parsed.filter((item) => typeof item?.text === "string").map((item) => ({
-					id: Number.isSafeInteger(item.id) ? item.id : nextAnnotationId++,
-					text: item.text,
-					annotation: typeof item.annotation === "string" ? item.annotation : ""
-				}));
-				dshRenumberAnnotations();
-			} catch {
-				pendingAnnotations = [];
-			}
+					let value = sessionStorage.getItem(key);
+					if (value === null) {
+						const legacy = sessionStorage.getItem(DSH_LEGACY_ANNOTATION_STORAGE_KEY);
+						const legacyItems = legacy === null ? [] : dshNormalizeStoredAnnotations(legacy);
+						if (legacyItems.length > 0 && legacyItems.some((item) => dshFindRangeForAnnotation(item) !== null)) {
+							pendingAnnotations = legacyItems;
+							dshRenumberAnnotations();
+							dshPersistAnnotations();
+							sessionStorage.removeItem(DSH_LEGACY_ANNOTATION_STORAGE_KEY);
+							return;
+						}
+						pendingAnnotations = [];
+						dshRenumberAnnotations();
+						return;
+					}
+					pendingAnnotations = dshNormalizeStoredAnnotations(value);
+					dshRenumberAnnotations();
+				} catch {
+					pendingAnnotations = [];
+				}
 			}
 			function dshPersistAnnotations() {
 				try {
-					if (pendingAnnotations.length === 0) sessionStorage.removeItem(DSH_ANNOTATION_STORAGE_KEY);
-					else sessionStorage.setItem(DSH_ANNOTATION_STORAGE_KEY, JSON.stringify(pendingAnnotations));
+					const key = dshAnnotationStorageKey();
+					if (pendingAnnotations.length === 0) {
+						sessionStorage.removeItem(key);
+						sessionStorage.removeItem(DSH_LEGACY_ANNOTATION_STORAGE_KEY);
+					}
+					else sessionStorage.setItem(key, JSON.stringify(pendingAnnotations));
 				} catch {}
+			}
+			function dshSyncAnnotationSession() {
+				const nextSessionId = dshCurrentSessionId();
+				if (activeAnnotationSessionId === null) {
+					activeAnnotationSessionId = nextSessionId;
+					dshLoadAnnotations();
+					return false;
+				}
+				if (nextSessionId === activeAnnotationSessionId) return false;
+				dshPersistAnnotations();
+				activeAnnotationSessionId = nextSessionId;
+				pendingAnnotations = [];
+				pendingSubmitSignature = null;
+				dshClearSelectionMarkers();
+				dshHideAnnotationPreview();
+				dshHideSelectionUi();
+				dshLoadAnnotations();
+				return true;
 			}
 			function dshClearSelectionMarkers() {
 				for (const record of selectionMarkerRecords) {
@@ -575,6 +644,7 @@ const SELECTION_ANNOTATION_RUNTIME_SOURCE = `
 					record.anchor?.remove();
 				}
 				selectionMarkerRecords = [];
+				draftMarkerSignature = null;
 			}
 			function dshClearEditSelectionMarkers() {
 				for (const record of editSelectionMarkerRecords) {
@@ -629,6 +699,14 @@ const SELECTION_ANNOTATION_RUNTIME_SOURCE = `
 			function dshAnnotationSignature(annotations = pendingAnnotations) {
 				return JSON.stringify(dshAnnotationPayload(annotations));
 			}
+			function dshAnnotationMarkerSignature(annotations = pendingAnnotations) {
+				return JSON.stringify(annotations.map((item) => ({
+					text: item.text,
+					annotation: typeof item.annotation === "string" ? item.annotation.trim() : "",
+					sourceKey: typeof item.sourceKey === "string" ? item.sourceKey : "",
+					sourceKind: typeof item.sourceKind === "string" ? item.sourceKind : ""
+				})));
+			}
 			function dshFindComposerCard(textarea) {
 				const editCard = textarea?.closest?.("[data-dsh-edit-card]") ?? null;
 				if (editCard !== null) return editCard;
@@ -668,6 +746,7 @@ const SELECTION_ANNOTATION_RUNTIME_SOURCE = `
 				return buttons[0] ?? null;
 			}
 			function dshSyncAnnotationSubmitState() {
+				dshSyncAnnotationSession();
 				const textarea = dshVisibleTextarea();
 				const card = dshFindComposerCard(textarea);
 				const button = card === null ? null : dshFindSubmitButton(card);
@@ -724,6 +803,7 @@ const SELECTION_ANNOTATION_RUNTIME_SOURCE = `
 				annotationPreview = panel;
 			}
 			function dshRenderComposerChip() {
+				dshSyncAnnotationSession();
 				const textarea = dshVisibleTextarea();
 				const oldChip = document.querySelector('.dsh-annotation-composer[data-dsh-annotation-target="main"]');
 				if (pendingAnnotations.length === 0 || textarea === null) {
@@ -735,6 +815,7 @@ const SELECTION_ANNOTATION_RUNTIME_SOURCE = `
 				if (card === null) return false;
 				const signature = dshAnnotationSignature();
 				if (oldChip !== null && oldChip.parentElement === card && oldChip.dataset.dshAnnotationSignature === signature) {
+					dshRenderSelectionMarkers();
 					dshSyncAnnotationSubmitState();
 					return true;
 				}
@@ -772,6 +853,7 @@ const SELECTION_ANNOTATION_RUNTIME_SOURCE = `
 				const editScroll = card.querySelector?.("[data-dsh-edit-scroll]") ?? null;
 				const directChild = dshFindDirectChild(card, editScroll ?? scroll ?? textarea);
 				if (oldChip === null || oldChip.parentElement !== card || oldChip.nextElementSibling !== (editScroll ?? directChild)) card.insertBefore(chipRow, editScroll ?? directChild ?? card.firstChild);
+				dshRenderSelectionMarkers();
 				dshSyncAnnotationSubmitState();
 				return true;
 			}
@@ -900,7 +982,7 @@ const SELECTION_ANNOTATION_RUNTIME_SOURCE = `
 				});
 			}
 			function dshCreateSelectionAnchor(item, range, fallbackRect, tone = "draft") {
-				if (dshRangeRect(range, fallbackRect) === null) return;
+				if (range === null && fallbackRect === null) return;
 				const highlight = document.createElement("div");
 				highlight.className = "dsh-selection-highlight";
 				if (tone !== "draft") highlight.dataset.dshAnnotationTone = tone;
@@ -922,8 +1004,8 @@ const SELECTION_ANNOTATION_RUNTIME_SOURCE = `
 				if (tone === "edit") editSelectionMarkerRecords.push(record);
 				else selectionMarkerRecords.push(record);
 			}
-			function dshFindRangeForText(text) {
-				const flow = document.querySelector("[data-chat-flow]");
+			function dshFindRangeForText(text, rootOverride = null) {
+				const flow = rootOverride ?? document.querySelector("[data-chat-flow]");
 				if (flow === null || typeof text !== "string" || text.trim() === "") return null;
 				const needle = text.trim().replace(/\s+/g, " ");
 				const walker = document.createTreeWalker(flow, NodeFilter.SHOW_TEXT, {
@@ -954,13 +1036,38 @@ const SELECTION_ANNOTATION_RUNTIME_SOURCE = `
 				}
 				return null;
 			}
+			function dshFindRangeForAnnotation(item) {
+				const flow = document.querySelector("[data-chat-flow]");
+				if (flow === null || item === null || typeof item?.text !== "string") return null;
+				let root = flow;
+				if (typeof item.sourceKey === "string" && item.sourceKey !== "") {
+					const escaped = dshCssEscape(item.sourceKey);
+					root = flow.querySelector('[data-chat-flow-key="' + escaped + '"]') ?? flow.querySelector('[data-chat-anchor-key="' + escaped + '"]') ?? flow;
+				}
+				return dshFindRangeForText(item.text, root);
+			}
+			function dshRenderSelectionMarkers() {
+				const signature = dshAnnotationMarkerSignature();
+				if (signature === draftMarkerSignature && selectionMarkerRecords.length === pendingAnnotations.length) {
+					dshQueueSelectionMarkerUpdate();
+					return;
+				}
+				dshClearSelectionMarkers();
+				draftMarkerSignature = signature;
+				pendingAnnotations.forEach((item, index) => {
+					item.id = index + 1;
+					const range = dshFindRangeForAnnotation(item);
+					if (range === null) return;
+					dshCreateSelectionAnchor(item, range, null, "draft");
+				});
+			}
 			function dshRenderEditSelectionMarkers(annotations) {
 				const signature = dshAnnotationSignature(annotations);
 				if (signature === editAnnotationSignature) return;
 				dshClearEditSelectionMarkers();
 				editAnnotationSignature = signature;
 				annotations.forEach((item, index) => {
-					const range = dshFindRangeForText(item.text);
+					const range = dshFindRangeForAnnotation(item);
 					if (range === null) return;
 					dshCreateSelectionAnchor({ ...item, id: index + 1 }, range, null, "edit");
 				});
@@ -1044,12 +1151,17 @@ const SELECTION_ANNOTATION_RUNTIME_SOURCE = `
 				const item = {
 					id: nextAnnotationId++,
 					text: selectedText,
-					annotation: typeof comment === "string" ? comment.trim() : ""
+					annotation: typeof comment === "string" ? comment.trim() : "",
+					sourceKey: selectedSourceKey,
+					sourceKind: selectedSourceKind
 				};
 				pendingAnnotations.push(item);
 				dshRenumberAnnotations();
 				dshPersistAnnotations();
-				dshCreateSelectionAnchor(item, selectedRange?.cloneRange?.() ?? null, selectedRect);
+				draftMarkerSignature = null;
+				const fallbackRange = selectedRange?.cloneRange?.() ?? dshFindRangeForAnnotation(item);
+				dshCreateSelectionAnchor(item, fallbackRange, selectedRect);
+				dshRenderSelectionMarkers();
 				dshRenderComposerChip();
 			}
 			function dshPrepareTextareaForSubmit(textarea) {
@@ -1212,11 +1324,19 @@ const SELECTION_ANNOTATION_RUNTIME_SOURCE = `
 					const text = selection?.toString?.().trim() ?? "";
 					if (text.length < 1 || selection.rangeCount < 1) {
 						dshHideSelectionUi();
+						selectedText = "";
+						selectedRect = null;
+						selectedRange = null;
+						selectedSourceKey = null;
+						selectedSourceKind = null;
 						return;
 					}
 					const ancestor = selection.getRangeAt(0).commonAncestorContainer;
 					const element = ancestor.nodeType === Node.ELEMENT_NODE ? ancestor : ancestor.parentElement;
 					if (element?.closest?.("[data-chat-flow]") === null) return;
+					const sourceNode = element.closest("[data-chat-flow-key],[data-chat-anchor-key]");
+					selectedSourceKey = sourceNode?.getAttribute("data-chat-flow-key") ?? sourceNode?.getAttribute("data-chat-anchor-key") ?? null;
+					selectedSourceKind = sourceNode?.getAttribute("data-chat-flow-kind") ?? null;
 					selectedText = text.length > 3000 ? text.slice(0, 3000) : text;
 					const rect = selection.getRangeAt(0).getBoundingClientRect();
 					if (rect.width <= 0 || rect.height <= 0) return;

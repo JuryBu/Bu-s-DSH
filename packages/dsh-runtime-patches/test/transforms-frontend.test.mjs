@@ -283,3 +283,16 @@ test("真实对话界面获得轮级过程折叠、相邻同类分组、运行�
     await rm(syntaxRoot, { recursive: true, force: true });
   }
 });
+
+test("选中文本注释草稿按会话分桶，并能从原消息重建蓝色编号", async () => {
+  const source = await readFile(new URL("../lib/transforms-frontend.mjs", import.meta.url), "utf8");
+  assert.match(source, /function dshCurrentSessionId\(\)/);
+  assert.match(source, /localStorage\.getItem\("dsh\.sessions\.current"\)/);
+  assert.match(source, /DSH_ANNOTATION_STORAGE_PREFIX \+ encodeURIComponent\(sessionId\)/);
+  assert.doesNotMatch(source, /const DSH_ANNOTATION_STORAGE_KEY = "__dsh_selection_annotations:" \+ location\.pathname/);
+  assert.match(source, /sourceKey: selectedSourceKey/);
+  assert.match(source, /sourceNode\?\.getAttribute\("data-chat-flow-key"\)/);
+  assert.match(source, /function dshFindRangeForAnnotation\(item\)/);
+  assert.match(source, /function dshRenderSelectionMarkers\(\)/);
+  assert.match(source, /dshRenderSelectionMarkers\(\);\n\s*dshSyncAnnotationSubmitState\(\);/);
+});

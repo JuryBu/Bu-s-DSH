@@ -551,6 +551,7 @@ const EDIT_RESEND_RUNTIME_SOURCE = `${EDIT_RESEND_LOGIC_SOURCE}
   \t\t\tconst availabilityReady = typeof editResend?.availability === "function";
   \t\t\tconst buttonRef = (0, react.useRef)(null);
 \t\t\tconst lastRetryAtRef = (0, react.useRef)(0);
+  \t\t\tconst retryAttemptRef = (0, react.useRef)(0);
   \t\t\tconst [shouldCheck, setShouldCheck] = (0, react.useState)(false);
 \t\t\tconst [checkRevision, setCheckRevision] = (0, react.useState)(0);
   \t\t\tconst [availability, setAvailability] = (0, react.useState)(() => ({ checking: false, allowed: false, reason: null, value: null }));
@@ -587,8 +588,27 @@ const EDIT_RESEND_RUNTIME_SOURCE = `${EDIT_RESEND_LOGIC_SOURCE}
 \t\t\t\tif (!shouldCheck || availability.checking || availability.allowed) return;
 \t\t\t\tif (!["session_running", "pending_input", "unknown"].includes(availability.reason)) return;
 \t\t\t\tif (Date.now() - lastRetryAtRef.current < 1000) return;
+\t\t\t\tretryAttemptRef.current += 1;
 \t\t\t\tsetCheckRevision((value) => value + 1);
 \t\t\t};
+  \t\t\t(0, react.useEffect)(() => {
+  \t\t\t\tif (!shouldCheck || availability.checking || availability.allowed) {
+  \t\t\t\t\tif (availability.allowed) retryAttemptRef.current = 0;
+  \t\t\t\t\treturn;
+  \t\t\t\t}
+  \t\t\t\tif (!["session_running", "pending_input", "unknown"].includes(availability.reason)) {
+  \t\t\t\t\tretryAttemptRef.current = 0;
+  \t\t\t\t\treturn;
+  \t\t\t\t}
+  \t\t\t\tif (retryAttemptRef.current >= 12) return;
+  \t\t\t\tconst delay = Math.min(3200, 900 + retryAttemptRef.current * 300);
+  \t\t\t\tconst timer = window.setTimeout(() => {
+  \t\t\t\t\tif (availability.checking || availability.allowed) return;
+  \t\t\t\t\tretryAttemptRef.current += 1;
+  \t\t\t\t\tsetCheckRevision((value) => value + 1);
+  \t\t\t\t}, delay);
+  \t\t\t\treturn () => window.clearTimeout(timer);
+  \t\t\t}, [availability.allowed, availability.checking, availability.reason, shouldCheck]);
   \t\t\tconst unavailable = disabledReason ?? (!seqState.allowed ? seqState.reason : !availabilityReady ? "重发接口尚未接入" : !shouldCheck ? "滚动到这条消息后会自动检查能否安全编辑重发" : availability.checking ? "正在检查这条消息能否安全编辑重发" : availability.allowed ? void 0 : dshEditAvailabilityReason(availability.reason));
   \t\t\tconst label = unavailable === void 0 ? "编辑并重新发送" : unavailable;
 \t\t\t(0, react.useEffect)(() => {

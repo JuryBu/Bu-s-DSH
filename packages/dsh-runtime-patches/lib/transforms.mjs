@@ -19,7 +19,7 @@ function replaceExactlyOnce(source, before, after, label) {
   if (first < 0 || first !== last) {
     throw new Error(`${label} 与受支持的 DSH 0.1.0-rc.6 结构不一致，停止修改候选版本`);
   }
-  return source.replace(before, after);
+  return source.replace(before, () => after);
 }
 
 function replaceRangeExactlyOnce(source, start, end, replacement, label) {
@@ -2192,8 +2192,8 @@ export function patchConversationUiSource(source) {
   return patchEditResendShellSource(
     patchTurnProcessCollapseSource(
       patchContextStatusCardSource(
-        patchActivityTrackFrontendSource(
-          patchSelectionAnnotationSource(
+        patchSelectionAnnotationSource(
+          patchActivityTrackFrontendSource(
             patchConversationActivityPresentationSource(patchContextMeterThresholdsSource(source)),
           ),
         ),

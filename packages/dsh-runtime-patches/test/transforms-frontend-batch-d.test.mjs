@@ -88,6 +88,15 @@ test("编辑重发：稳定消息编号、同草稿 operationId 与发送中锁�
   assert.equal(dshEditOperationIdFor(cache, { ...draft, modelSelection: { provider: "openai", model: "gpt-5.6", reasoningEffort: "high" } }, createId), "op-5");
 });
 
+test("编辑重发：停止生成后的 running 可用性会自动短轮询重查", () => {
+  const source = readFileSync(path.join(import.meta.dirname, "../lib/frontend/edit-resend-shell.mjs"), "utf8");
+  assert.match(source, /const retryAttemptRef = \(0, react\.useRef\)\(0\)/);
+  assert.match(source, /\["session_running", "pending_input", "unknown"\]\.includes\(availability\.reason\)/);
+  assert.match(source, /window\.setTimeout\(\(\) => \{/);
+  assert.match(source, /retryAttemptRef\.current >= 12/);
+  assert.match(source, /setCheckRevision\(\(value\) => value \+ 1\)/);
+});
+
 test("编辑重发：当前模型选择、原始块顺序和 106K 大文本路径都有纯函数保护", () => {
   const selected = { provider: "openai", model: "gpt-5.6", reasoningEffort: "max", __speed: "fast" };
   const sessions = {
