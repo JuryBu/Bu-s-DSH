@@ -211,6 +211,7 @@ test("对干净基线单独应用：三处锚点命中，产物可解析", { ski
     "function DshEditChip(",
     "function dshEnsureMessageActionHoverStyle(",
     "const DSH_EDIT_BUS = ",
+    "const DSH_COMPOSER_FILE_DRAFTS = ",
   ]) {
     assert.equal(patched.split(marker).length - 1, 1, `${marker} 应恰好定义一次`);
   }
@@ -234,6 +235,11 @@ test("对干净基线单独应用：真实契约都接上了，没有伪造状�
   assert.ok(patched.includes("DSH_EDIT_BUS.publishFace(sessionId, dshEditFace)"));
   assert.ok(patched.includes('"data-dsh-edit-file-button": true'));
   assert.ok(patched.includes('type: "file"'));
+  assert.ok(patched.includes('"data-dsh-input-file-button": true'));
+  assert.ok(patched.includes('"data-dsh-input-file-chips": true'));
+  assert.ok(patched.includes("function dshComposerMergeFileManifest("));
+  assert.ok(patched.includes("【附件清单｜composer-files:v1】"));
+  assert.ok(patched.includes('void dshSubmitWithFiles("queue")'));
   // 分支提示是常驻文案，副作用清单只有后端给了才渲染。
   assert.ok(patched.includes("发送后将从这条消息之前的状态创建新分支"));
   assert.ok(patched.includes("dshEditExternalEffects(editResend?.externalEffects)"));

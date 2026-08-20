@@ -11,18 +11,37 @@ const DEFAULT_HOST = "https://server.codeium.com";
 const CATALOG_TTL_MS = 5 * 60_000;
 
 const familyMetadata = [
-  ["gpt-5-6-sol", 1_050_000, 128_000],
-  ["gpt-5-6-terra", 1_050_000, 128_000],
-  ["gpt-5-6-luna", 1_050_000, 128_000],
+  ["claude-5-fable", 1_000_000, 128_000],
+  ["claude-fable-5", 1_000_000, 128_000],
   ["claude-opus-5", 1_000_000, 128_000],
   ["claude-opus-4-8", 200_000, 128_000],
-  ["claude-fable-5", 1_000_000, 128_000],
+  ["claude-opus-4-7", 1_000_000, 128_000],
+  ["claude-opus-4-6", 200_000, 128_000],
+  ["MODEL_CLAUDE_4_5_OPUS", 200_000, 128_000],
   ["claude-sonnet-5", 200_000, 64_000],
+  ["claude-sonnet-4-6", 200_000, 64_000],
   ["glm-5-2", 200_000, 131_000],
+  ["kimi-k3", 1_000_000, 128_000],
   ["kimi-k2-7", 256_000, 256_000],
+  ["kimi-k2-6", 256_000, 256_000],
+  ["MODEL_GOOGLE_GEMINI_3_0_FLASH", 1_048_576, 128_000],
+  ["gemini-3-7-flash", 1_048_576, 128_000],
+  ["gemini-3-6-flash", 1_048_576, 128_000],
+  ["gemini-3-5-flash", 1_048_576, 128_000],
   ["gemini-3-1-pro", 1_000_000, 128_000],
+  ["MODEL_GOOGLE_GEMINI_2_5_PRO", 1_048_576, 128_000],
+  ["grok-4-6", 500_000, 128_000],
   ["grok-4-5", 500_000, 128_000],
-  ["swe-1-7", 256_000, 128_000]
+  ["swe-1-7-lightning", 202_752, 128_000],
+  ["swe-1-7", 262_000, 128_000],
+  ["swe-1-6", 200_000, 128_000],
+  ["deepseek-v4-flash", 1_048_576, 128_000],
+  ["deepseek-v4-pro", 1_048_576, 128_000],
+  ["gpt-5-3-codex", 400_000, 128_000],
+  ["gpt-5-4-mini", 400_000, 128_000],
+  ["gpt-5-5", 272_000, 128_000],
+  ["gpt-5-4", 272_000, 128_000],
+  ["MODEL_GPT_5_2", 384_000, 128_000]
 ];
 
 const directCascadeUnsupportedFamilies = [
@@ -50,8 +69,10 @@ export function isWindsurfVisionTool(tool) {
 
 function variantReasoningEffort(modelUid, label) {
   const tokens = `${modelUid} ${label}`.toLowerCase().split(/[^a-z0-9]+/u).filter(Boolean);
+  if (tokens.includes("none") || (tokens.includes("no") && tokens.includes("thinking"))) return "off";
   const effort = [...tokens].reverse().find(token => ["minimal", "low", "medium", "high", "xhigh", "max", "ultra"].includes(token));
   if (effort) return effort;
+  if (tokens.includes("thinking") || tokens.includes("reasoning")) return "high";
   return modelUid === "swe-1-7" ? "max" : undefined;
 }
 
@@ -66,10 +87,6 @@ function metadataFor(modelUid) {
   const suffix = modelUid.slice(best[0].length).replace(/^[-_]+/u, "");
   if (suffix.split(/[-_]+/u).includes("1m")) return [best[0], 1_000_000, best[2]];
   return best;
-}
-
-function wantedModel(modelUid) {
-  return familyMetadata.some(([prefix]) => modelUid === prefix || modelUid.startsWith(`${prefix}-`) || modelUid.startsWith(`${prefix}_`));
 }
 
 const devinLocalOnlyPattern = /\b(?:only\s+(?:(?:available|supported|usable)\s+)?in\s+devin\s+local|devin\s+local[-\s]+only)\b/iu;
@@ -198,7 +215,7 @@ async function fetchCatalog(apiKey, host, signal) {
   for (const field of upstream.iterFields(buffer)) {
     if (field.num !== 1 || field.wire !== 2 || !Buffer.isBuffer(field.value)) continue;
     const model = parseWindsurfCatalogModelConfig(field.value, upstream.iterFields);
-    if (model.modelUid && isWindsurfCloudCallableModel(model) && wantedModel(model.modelUid)) next.push(piModel(model.modelUid, model.label, model.capability));
+    if (model.modelUid && isWindsurfCloudCallableModel(model)) next.push(piModel(model.modelUid, model.label, model.capability));
   }
   if (next.length === 0) throw new Error("Windsurf 没有返回当前账号可用的目标模型");
   next.sort((left, right) => left.name.localeCompare(right.name, "zh-CN"));

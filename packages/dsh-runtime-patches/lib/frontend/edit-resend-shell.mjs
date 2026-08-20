@@ -1,4 +1,4 @@
-/**
+﻿/**
  * 批次 D（窗口 G3）：编辑上一条用户消息的外壳。
  *
  * 设计要点与真实依据（干净基线 `0.1.0-rc.6-oauth` 的 `dsh-client-ui-conversation/lib/client.js`）：
@@ -317,6 +317,8 @@ export const EDIT_RESEND_SHELL_STYLE = [
   '[data-dsh-edit-mirror]{min-height:48px}',
   '.dsh-er-gallery{padding:0 12px}',
   '.dsh-er-chips{display:flex;flex-wrap:wrap;gap:6px;padding:0 12px}',
+  '.dsh-compose-file-chips{display:flex;flex-wrap:wrap;gap:6px;padding:0 12px}',
+  '.dsh-compose-file-button[data-busy="true"]{opacity:.7}',
   '.dsh-er-chip{display:inline-flex;align-items:center;gap:6px;max-width:220px;min-width:0;padding:3px 4px;border:1px solid var(--dsw-alias-border-l2);border-radius:9px;background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-secondary);font-size:12px;line-height:18px}',
   '.dsh-er-chip img{flex:none;width:22px;height:22px;border-radius:5px;object-fit:cover}',
   '.dsh-er-chip>span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
@@ -364,7 +366,52 @@ const EDIT_RESEND_RUNTIME_SOURCE = `${EDIT_RESEND_LOGIC_SOURCE}
 \t\t\t\treader.readAsDataURL(file);
 \t\t\t});
 \t\t}
-\t\tconst DSH_EDIT_RESEND_CLIENTS = new WeakMap();
+\t\tconst DSH_COMPOSER_FILE_TEXT_LIMIT = 256 * 1024;
+\t\tfunction dshComposerFileSizeText(bytes) {
+\t\t\tif (!Number.isFinite(bytes) || bytes < 0) return "未知大小";
+\t\t\tif (bytes < 1024) return String(bytes) + " B";
+\t\t\tif (bytes < 1024 * 1024) return (bytes / 1024).toFixed(bytes < 10 * 1024 ? 1 : 0) + " KiB";
+\t\t\treturn (bytes / 1024 / 1024).toFixed(bytes < 10 * 1024 * 1024 ? 1 : 0) + " MiB";
+\t\t}
+\t\tfunction dshComposerCanInlineFile(file) {
+\t\t\tconst name = String(file?.name ?? "");
+\t\t\tconst type = String(file?.type ?? "");
+\t\t\treturn type.startsWith("text/")
+\t\t\t\t|| /\\.(?:txt|md|markdown|json|jsonl|csv|tsv|log|xml|yaml|yml|js|jsx|ts|tsx|py|css|html|htm|ini|toml|rs|go|java|c|cpp|h|hpp|cs|sh|ps1|bat|sql)$/iu.test(name);
+\t\t}
+\t\tasync function dshComposerFileManifest(items) {
+\t\t\tconst lines = [
+\t\t\t\t"【附件清单｜composer-files:v1】",
+\t\t\t\t"以下普通文件来自本次用户输入；能安全读取为文本且不超过 256 KiB 的文件已内联，二进制或过大文件只提供元数据。"
+\t\t\t];
+\t\t\tfor (let index = 0; index < items.length; index += 1) {
+\t\t\t\tconst file = items[index].file ?? items[index];
+\t\t\t\tconst name = typeof file?.name === "string" && file.name !== "" ? file.name : "未命名文件";
+\t\t\t\tconst type = typeof file?.type === "string" && file.type !== "" ? file.type : "application/octet-stream";
+\t\t\t\tconst size = Number.isFinite(file?.size) ? file.size : 0;
+\t\t\t\tlines.push("");
+\t\t\t\tlines.push("### 文件 " + (index + 1) + ": " + name);
+\t\t\t\tlines.push("- MIME: " + type);
+\t\t\t\tlines.push("- 大小: " + dshComposerFileSizeText(size));
+\t\t\t\tif (size <= DSH_COMPOSER_FILE_TEXT_LIMIT && dshComposerCanInlineFile(file) && typeof file.text === "function") {
+\t\t\t\t\tconst text = await file.text();
+\t\t\t\t\tlines.push("- 内容:");
+\t\t\t\t\tlines.push("<file-content name=" + JSON.stringify(name) + ">");
+\t\t\t\t\tlines.push(text.replaceAll("</file-content>", "<\\/file-content>"));
+\t\t\t\t\tlines.push("</file-content>");
+\t\t\t\t} else {
+\t\t\t\t\tlines.push("- 内容未内联：该文件不是安全文本文件，或超过 256 KiB。");
+\t\t\t\t}
+\t\t\t}
+\t\t\treturn lines.join("\\n");
+\t\t}
+	\t\tfunction dshComposerMergeFileManifest(draft, manifest) {
+	\t\t\tconst text = String(draft ?? "").trim();
+	\t\t\tif (text.includes("【附件清单｜composer-files:v1】")) return text;
+	\t\t\treturn text === "" ? manifest : text + "\\n\\n" + manifest;
+	\t\t}
+	\t\tconst DSH_COMPOSER_FILE_DRAFTS = new Map();
+	\t\tconst DSH_EDIT_RESEND_CLIENTS = new WeakMap();
 \t\tfunction dshEditResendClient(sessions, sessionId) {
 \t\t\tconst cacheable = (typeof sessions === "object" && sessions !== null) || typeof sessions === "function";
 \t\t\tconst cached = cacheable ? DSH_EDIT_RESEND_CLIENTS.get(sessions)?.get(sessionId) : void 0;
@@ -1086,6 +1133,249 @@ export function patchEditResendShellSource(source) {
   \t\t\t}, [dshEditFace, sessionId, variant]);
 \t\t\tconst continuable = subagent?.address.mode === "continuable";`,
     "主输入框发布编辑器控件通道",
+  );
+  result = replaceExactlyOnce(
+    result,
+    `\t\t\tconst attachments = (0, react.useMemo)(() => input === void 0 || draftImages === void 0 ? [] : draftImages(input.imageIds), [draftImages, input?.imageIds]);
+\t\t\tconst empty = draft.trim() === "" && attachments.length === 0;`,
+    `\t\t\tconst attachments = (0, react.useMemo)(() => input === void 0 || draftImages === void 0 ? [] : draftImages(input.imageIds), [draftImages, input?.imageIds]);
+\t\t\tconst [dshComposerFileState, setDshComposerFileState] = (0, react.useState)(() => ({
+\t\t\t\tsessionId,
+\t\t\t\tfiles: DSH_COMPOSER_FILE_DRAFTS.get(sessionId) ?? []
+\t\t\t}));
+\t\t\tconst dshDraftFiles = dshComposerFileState.sessionId === sessionId ? dshComposerFileState.files : DSH_COMPOSER_FILE_DRAFTS.get(sessionId) ?? [];
+\t\t\tconst dshUpdateDraftFiles = (0, react.useCallback)((updater) => {
+\t\t\t\tsetDshComposerFileState((state) => {
+\t\t\t\t\tconst current = state.sessionId === sessionId ? state.files : DSH_COMPOSER_FILE_DRAFTS.get(sessionId) ?? [];
+\t\t\t\t\tconst next = typeof updater === "function" ? updater(current) : updater;
+\t\t\t\t\tif (next.length === 0) DSH_COMPOSER_FILE_DRAFTS.delete(sessionId);
+\t\t\t\t\telse DSH_COMPOSER_FILE_DRAFTS.set(sessionId, next);
+\t\t\t\t\treturn {
+\t\t\t\t\t\tsessionId,
+\t\t\t\t\t\tfiles: next
+\t\t\t\t\t};
+\t\t\t\t});
+\t\t\t}, [sessionId]);
+\t\t\tconst [dshFileSubmitting, setDshFileSubmitting] = (0, react.useState)(false);
+\t\t\tconst dshFileSubmitDraftRef = (0, react.useRef)(null);
+\t\t\tconst dshFileSubmitSeenRef = (0, react.useRef)(false);
+\t\t\tconst empty = draft.trim() === "" && attachments.length === 0 && dshDraftFiles.length === 0;`,
+    "普通输入框文件草稿状态",
+  );
+  result = replaceExactlyOnce(
+    result,
+    "\t\t\tconst inputRef = (0, react.useRef)(null);",
+    `\t\t\tconst inputRef = (0, react.useRef)(null);
+\t\t\tconst dshFileInputRef = (0, react.useRef)(null);`,
+    "普通输入框文件选择引用",
+  );
+  result = replaceExactlyOnce(
+    result,
+    `\t\t\tconst imageLimits = useProjection("imageLimits");
+\t\t\t(0, react.useEffect)(() => {`,
+    `\t\t\tconst imageLimits = useProjection("imageLimits");
+\t\t\t(0, react.useEffect)(() => {
+\t\t\t\tsetDshFileSubmitting(false);
+\t\t\t\tdshFileSubmitDraftRef.current = null;
+\t\t\t\tdshFileSubmitSeenRef.current = false;
+\t\t\t}, [sessionId]);
+\t\t\t(0, react.useEffect)(() => {
+\t\t\t\tif (!dshFileSubmitting) return;
+\t\t\t\tconst currentDraft = input?.draft ?? "";
+\t\t\t\tconst pendingDraft = dshFileSubmitDraftRef.current;
+\t\t\t\tif (typeof pendingDraft === "string" && currentDraft === pendingDraft) dshFileSubmitSeenRef.current = true;
+\t\t\t\tif (dshFileSubmitSeenRef.current && currentDraft.trim() === "") {
+\t\t\t\t\tdshUpdateDraftFiles([]);
+\t\t\t\t\tsetDshFileSubmitting(false);
+\t\t\t\t\tdshFileSubmitDraftRef.current = null;
+\t\t\t\t\tdshFileSubmitSeenRef.current = false;
+\t\t\t\t}
+\t\t\t}, [dshFileSubmitting, dshUpdateDraftFiles, input?.draft]);
+\t\t\t(0, react.useEffect)(() => {`,
+    "普通输入框文件发送后清理",
+  );
+  result = replaceExactlyOnce(
+    result,
+    `\t\t\t\tif (files.length > 0) intakeImages(files);`,
+    `\t\t\t\tif (files.length > 0) dshIntakeComposerFiles(files);`,
+    "普通输入框粘贴普通文件",
+  );
+  result = replaceExactlyOnce(
+    result,
+    `\t\t\tconst canAcceptDrop = !locked && !machineBusy && addImages !== void 0;`,
+    `\t\t\tconst dshIntakeComposerFiles = (0, react.useCallback)((files) => {
+\t\t\t\tconst outcome = dshEditIntakeFiles(files, imageLimits);
+\t\t\t\tif (outcome.rejected.length > 0) {
+\t\t\t\t\tshowToast(outcome.rejected.map((row) => row.name + (row.reason === "size" ? "（超出大小上限）" : "（不支持的类型）")).join("、") + " 未加入");
+\t\t\t\t}
+\t\t\t\tconst imageFiles = [];
+\t\t\t\tconst normalFiles = [];
+\t\t\t\tfor (const file of outcome.accepted) {
+\t\t\t\t\tconst type = typeof file?.type === "string" ? file.type : "";
+\t\t\t\t\tif (type.startsWith("image/") && addImages !== void 0) imageFiles.push(file);
+\t\t\t\t\telse normalFiles.push(file);
+\t\t\t\t}
+\t\t\t\tif (imageFiles.length > 0) intakeImages(imageFiles);
+\t\t\t\tif (normalFiles.length > 0) {
+\t\t\t\t\tdshUpdateDraftFiles((previous) => [...previous, ...normalFiles.map((file, index) => ({
+\t\t\t\t\t\tkey: "composer:" + Date.now() + ":" + Math.random().toString(36).slice(2) + ":" + index,
+\t\t\t\t\t\tfile,
+\t\t\t\t\t\tname: typeof file?.name === "string" && file.name !== "" ? file.name : "未命名文件"
+\t\t\t\t\t}))]);
+\t\t\t\t}
+\t\t\t\treturn outcome.accepted.length > 0;
+\t\t\t}, [addImages, dshUpdateDraftFiles, imageLimits, intakeImages, showToast]);
+\t\t\tconst dshDropComposerFile = (0, react.useCallback)((key) => {
+\t\t\t\tdshUpdateDraftFiles((previous) => previous.filter((item) => item.key !== key));
+\t\t\t}, [dshUpdateDraftFiles]);
+\t\t\tconst dshSubmitWithFiles = (0, react.useCallback)(async (mode) => {
+\t\t\t\tif (keyboard === void 0 || dshFileSubmitting) return;
+\t\t\t\tif (dshDraftFiles.length === 0) {
+\t\t\t\t\tkeyboard.submit(mode);
+\t\t\t\t\treturn;
+\t\t\t\t}
+\t\t\t\tsetDshFileSubmitting(true);
+\t\t\t\ttry {
+\t\t\t\t\tconst manifest = await dshComposerFileManifest(dshDraftFiles);
+\t\t\t\t\tconst nextDraft = dshComposerMergeFileManifest(input?.draft ?? draft, manifest);
+\t\t\t\t\tdshFileSubmitDraftRef.current = nextDraft;
+\t\t\t\t\tdshFileSubmitSeenRef.current = false;
+\t\t\t\t\tkeyboard.setDraft(nextDraft);
+\t\t\t\t\tif (typeof keyboard.track === "function") keyboard.track(nextDraft, nextDraft.length);
+\t\t\t\t\twindow.setTimeout(() => {
+\t\t\t\t\t\tkeyboard.submit(mode);
+\t\t\t\t\t}, 0);
+\t\t\t\t\twindow.setTimeout(() => {
+\t\t\t\t\t\tsetDshFileSubmitting(false);
+\t\t\t\t\t}, 4000);
+\t\t\t\t} catch (error) {
+\t\t\t\t\tsetDshFileSubmitting(false);
+\t\t\t\t\tshowToast("文件读取失败：" + (error instanceof Error ? error.message : String(error)));
+\t\t\t\t}
+\t\t\t}, [draft, dshDraftFiles, dshFileSubmitting, input?.draft, keyboard, showToast]);
+\t\t\tconst canAcceptDrop = !locked && !machineBusy;`,
+    "普通输入框普通文件入口逻辑",
+  );
+  result = replaceExactlyOnce(
+    result,
+    `\t\t\t\t\tintakeImages([...event.dataTransfer?.files ?? []]);`,
+    `\t\t\t\t\tdshIntakeComposerFiles([...event.dataTransfer?.files ?? []]);`,
+    "普通输入框拖拽普通文件",
+  );
+  result = replaceExactlyOnce(
+    result,
+    `\t\t\t}, [canAcceptDrop, intakeImages]);`,
+    `\t\t\t}, [canAcceptDrop, dshIntakeComposerFiles]);`,
+    "普通输入框拖拽依赖普通文件",
+  );
+  result = replaceExactlyOnce(
+    result,
+    `\t\t\t\tkeyboard.submit(resolveSubmitMode(running, accelerated ? "accelerated" : "enter", subagent === null));`,
+    `\t\t\t\tvoid dshSubmitWithFiles(resolveSubmitMode(running, accelerated ? "accelerated" : "enter", subagent === null));`,
+    "普通输入框回车发送普通文件",
+  );
+  result = replaceExactlyOnce(
+    result,
+    `\t\t\t\tif (!empty && !disabled && !machineBusy) inputActions.submit();`,
+    `\t\t\t\tif (!empty && !disabled && !machineBusy) void dshSubmitWithFiles("queue");`,
+    "普通输入框按钮发送普通文件",
+  );
+  result = replaceExactlyOnce(
+    result,
+    `\t\t\t\t\t\t\trailItems.length > 0 && (0, react_jsx_runtime.jsx)("div", {
+\t\t\t\t\t\t\t\tclassName: InputBar_module_css_default.attachments,
+\t\t\t\t\t\t\t\tchildren: (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_attachment.AttachmentRail, {
+\t\t\t\t\t\t\t\t\titems: railItems,
+\t\t\t\t\t\t\t\t\tlabels: attachmentRailLabels(t),
+\t\t\t\t\t\t\t\t\tonOpen: (item) => {
+\t\t\t\t\t\t\t\t\t\tsetPreview(item.attachment);
+\t\t\t\t\t\t\t\t\t},
+\t\t\t\t\t\t\t\t\tonRemove: (item) => {
+\t\t\t\t\t\t\t\t\t\tremoveImage?.(item.attachment.id);
+\t\t\t\t\t\t\t\t\t}
+\t\t\t\t\t\t\t\t})
+\t\t\t\t\t\t\t}),`,
+    `\t\t\t\t\t\t\trailItems.length > 0 && (0, react_jsx_runtime.jsx)("div", {
+\t\t\t\t\t\t\t\tclassName: InputBar_module_css_default.attachments,
+\t\t\t\t\t\t\t\tchildren: (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_attachment.AttachmentRail, {
+\t\t\t\t\t\t\t\t\titems: railItems,
+\t\t\t\t\t\t\t\t\tlabels: attachmentRailLabels(t),
+\t\t\t\t\t\t\t\t\tonOpen: (item) => {
+\t\t\t\t\t\t\t\t\t\tsetPreview(item.attachment);
+\t\t\t\t\t\t\t\t\t},
+\t\t\t\t\t\t\t\t\tonRemove: (item) => {
+\t\t\t\t\t\t\t\t\t\tremoveImage?.(item.attachment.id);
+\t\t\t\t\t\t\t\t\t}
+\t\t\t\t\t\t\t\t})
+\t\t\t\t\t\t\t}),
+\t\t\t\t\t\t\tdshDraftFiles.length > 0 && (0, react_jsx_runtime.jsx)("div", {
+\t\t\t\t\t\t\t\tclassName: "dsh-compose-file-chips",
+\t\t\t\t\t\t\t\t"data-dsh-input-file-chips": true,
+\t\t\t\t\t\t\t\tchildren: dshDraftFiles.map((item) => (0, react_jsx_runtime.jsx)(DshEditChip, {
+\t\t\t\t\t\t\t\t\titem,
+\t\t\t\t\t\t\t\t\tonRemove: dshFileSubmitting ? void 0 : dshDropComposerFile
+\t\t\t\t\t\t\t\t}, item.key))
+\t\t\t\t\t\t\t}),`,
+    "普通输入框普通文件 chip",
+  );
+  const inputToolRowIndent = "\t".repeat(10);
+  const inputFileButtonAnchor = [
+    `${inputToolRowIndent}}),`,
+    `${inputToolRowIndent}(0, react_jsx_runtime.jsxs)("div", {`,
+    `${inputToolRowIndent}\tclassName: InputBar_module_css_default.modes,`,
+  ].join("\n");
+  const inputFileButtonSource = [
+    `${inputToolRowIndent}(0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Tooltip, {`,
+    `${inputToolRowIndent}\tlabel: "文件",`,
+    `${inputToolRowIndent}\tside: "top",`,
+    `${inputToolRowIndent}\tdelayMs: 500,`,
+    `${inputToolRowIndent}\tchildren: (0, react_jsx_runtime.jsxs)("span", {`,
+    `${inputToolRowIndent}\t\tchildren: [(0, react_jsx_runtime.jsx)("input", {`,
+    `${inputToolRowIndent}\t\t\tref: dshFileInputRef,`,
+    `${inputToolRowIndent}\t\t\ttype: "file",`,
+    `${inputToolRowIndent}\t\t\tmultiple: true,`,
+    `${inputToolRowIndent}\t\t\tstyle: { display: "none" },`,
+    `${inputToolRowIndent}\t\t\t"data-dsh-input-file-input": true,`,
+    `${inputToolRowIndent}\t\t\tonChange: (event) => {`,
+    `${inputToolRowIndent}\t\t\t\tdshIntakeComposerFiles(event.target.files);`,
+    `${inputToolRowIndent}\t\t\t\tevent.target.value = "";`,
+    `${inputToolRowIndent}\t\t\t}`,
+    `${inputToolRowIndent}\t\t}), (0, react_jsx_runtime.jsx)("button", {`,
+    `${inputToolRowIndent}\t\t\ttype: "button",`,
+    `${inputToolRowIndent}\t\t\tclassName: InputBar_module_css_default.add,`,
+    `${inputToolRowIndent}\t\t\t"aria-label": "文件",`,
+    `${inputToolRowIndent}\t\t\t"data-dsh-input-file-button": true,`,
+    `${inputToolRowIndent}\t\t\t"data-busy": dshFileSubmitting ? "true" : "false",`,
+    `${inputToolRowIndent}\t\t\tdisabled: locked || machineBusy || dshFileSubmitting,`,
+    `${inputToolRowIndent}\t\t\tonMouseDown: keepFocus,`,
+    `${inputToolRowIndent}\t\t\tonClick: () => dshFileInputRef.current?.click(),`,
+    `${inputToolRowIndent}\t\t\tchildren: (0, react_jsx_runtime.jsx)("svg", {`,
+    `${inputToolRowIndent}\t\t\t\tviewBox: "0 0 16 16",`,
+    `${inputToolRowIndent}\t\t\t\twidth: "16",`,
+    `${inputToolRowIndent}\t\t\t\theight: "16",`,
+    `${inputToolRowIndent}\t\t\t\t"aria-hidden": true,`,
+    `${inputToolRowIndent}\t\t\t\tchildren: (0, react_jsx_runtime.jsx)("path", { d: "M1.5 4.25A1.75 1.75 0 0 1 3.25 2.5h3l1.25 1.5h5.25a1.75 1.75 0 0 1 1.75 1.75v6A1.75 1.75 0 0 1 12.75 13.5h-9.5A1.75 1.75 0 0 1 1.5 11.75v-7.5Zm1.75-.5a.5.5 0 0 0-.5.5v7.5c0 .276.224.5.5.5h9.5a.5.5 0 0 0 .5-.5v-6a.5.5 0 0 0-.5-.5H6.914l-1.25-1.5H3.25Z", fill: "currentColor" })`,
+    `${inputToolRowIndent}\t\t\t})`,
+    `${inputToolRowIndent}\t\t})]`,
+    `${inputToolRowIndent}\t})`,
+    `${inputToolRowIndent}}),`,
+  ].join("\n");
+  result = replaceExactlyOnce(
+    result,
+    inputFileButtonAnchor,
+    [
+      `${inputToolRowIndent}}),`,
+      inputFileButtonSource,
+      `${inputToolRowIndent}(0, react_jsx_runtime.jsxs)("div", {`,
+      `${inputToolRowIndent}\tclassName: InputBar_module_css_default.modes,`,
+    ].join("\n"),
+    "普通输入框文件按钮",
+  );
+  result = replaceExactlyOnce(
+    result,
+    `\t\t\t\t\t\t\t\tdisabled: primaryStops ? stop === void 0 : empty || disabled || machineBusy,`,
+    `\t\t\t\t\t\t\t\tdisabled: primaryStops ? stop === void 0 : empty || disabled || machineBusy || dshFileSubmitting,`,
+    "普通输入框文件发送期间禁用主按钮",
   );
   result = replaceExactlyOnce(
     result,

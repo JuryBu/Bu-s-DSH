@@ -72,6 +72,28 @@ test("Windsurf 通用显示名称不再被猜成推理档位，只信目录元�
   assert.equal(efforts.includes("max"), true);
 });
 
+test("Windsurf 新开放型号按官方目录参数归并为基础模型和档位", () => {
+  const [group] = api.stardustFacetGroups([{ id: "windsurf", name: "Windsurf / Devin", models: [
+    { id: "claude-opus-4-6", name: "Claude Opus 4.6" },
+    { id: "claude-opus-4-6-thinking", name: "Claude Opus 4.6 Thinking", stardustVariantEffort: "high" },
+    { id: "claude-opus-4-6-1m", name: "Claude Opus 4.6 1M" },
+    { id: "MODEL_GOOGLE_GEMINI_3_0_FLASH_MINIMAL", name: "Gemini 3 Flash Minimal" },
+    { id: "MODEL_GOOGLE_GEMINI_3_0_FLASH_LOW", name: "Gemini 3 Flash Low" },
+    { id: "MODEL_GOOGLE_GEMINI_3_0_FLASH_MEDIUM", name: "Gemini 3 Flash Medium" },
+    { id: "MODEL_GOOGLE_GEMINI_3_0_FLASH_HIGH", name: "Gemini 3 Flash High" },
+    { id: "MODEL_GPT_5_2_NONE", name: "GPT-5.2 No Thinking" },
+    { id: "MODEL_GPT_5_2_XHIGH_PRIORITY", name: "GPT-5.2 XHigh Thinking Fast" },
+    { id: "swe-1-7-lightning-medium", name: "SWE-1.7 Lightning Medium" }
+  ] }]);
+  const byName = new Map(group.families.map((family) => [family.name, family]));
+  assert.deepEqual(api.stardustFamilyContexts(byName.get("Claude Opus 4.6")), ["default", "1m"]);
+  assert.deepEqual(api.stardustFamilyEfforts(byName.get("Claude Opus 4.6"), "standard", "default"), ["off", "high"]);
+  assert.deepEqual(api.stardustFamilyEfforts(byName.get("Gemini 3 Flash"), "standard"), ["minimal", "low", "medium", "high"]);
+  assert.deepEqual(api.stardustFamilySpeeds(byName.get("GPT-5.2"), "xhigh"), ["fast"]);
+  assert.equal(api.stardustSelectionForFamily(byName.get("GPT-5.2"), { effort: "xhigh", speed: "fast" }).model, "MODEL_GPT_5_2_XHIGH_PRIORITY");
+  assert.equal(api.stardustSelectionForFamily(byName.get("SWE-1.7 Lightning"), { effort: "medium" }).model, "swe-1-7-lightning-medium");
+});
+
 test("跨 Provider 继承无效推理强度时自动回到目标模型合法组合", () => {
   const [group] = api.stardustFacetGroups([{ id: "deepseek", name: "DeepSeek", models: [
     { id: "deepseek-v4-pro", name: "DeepSeek V4 Pro" }

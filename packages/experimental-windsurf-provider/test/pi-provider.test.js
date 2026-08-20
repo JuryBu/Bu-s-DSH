@@ -168,6 +168,17 @@ test("实时目录的 Devin Local-only 元数据和已确认不支持直连的�
   assert.equal(isWindsurfCloudCallableModel({ ...model, modelUid: "claude-opus-5-high", metadata: ["Available in the cloud"] }), true);
 });
 
+test("实时目录不再用旧白名单误删新开放的云端模型", () => {
+  for (const modelUid of [
+    "claude-opus-4-6-thinking-1m",
+    "MODEL_GOOGLE_GEMINI_3_0_FLASH_MEDIUM",
+    "gemini-3-6-flash-high",
+    "MODEL_GPT_5_2_XHIGH_PRIORITY"
+  ]) {
+    assert.equal(isWindsurfCloudCallableModel({ modelUid, disabled: false, metadata: [] }), true, modelUid);
+  }
+});
+
 test("实时目录即使把 WSF GPT 标为 enabled，也不会把仅 Devin Local 可用的家族暴露给直连选择器", () => {
   assert.equal(isWindsurfCloudCallableModel({
     modelUid: "gpt-5-6-sol-medium",

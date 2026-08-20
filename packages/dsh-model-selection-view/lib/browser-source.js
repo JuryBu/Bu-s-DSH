@@ -6,18 +6,37 @@ const STARDUST_DEFAULT_CONTEXT = "default";
 const STARDUST_ONE_MILLION_CONTEXT = "1m";
 const STARDUST_EFFORT_ORDER = ["off", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"];
 const STARDUST_WINDSURF_FAMILIES = [
-  ["gpt-5-6-sol", "GPT-5.6 Sol"],
-  ["gpt-5-6-terra", "GPT-5.6 Terra"],
-  ["gpt-5-6-luna", "GPT-5.6 Luna"],
+  ["claude-5-fable", "Claude Fable 5"],
+  ["claude-fable-5", "Claude Fable 5"],
   ["claude-opus-5", "Claude Opus 5"],
   ["claude-opus-4-8", "Claude Opus 4.8"],
-  ["claude-fable-5", "Claude Fable 5"],
+  ["claude-opus-4-7", "Claude Opus 4.7"],
+  ["claude-opus-4-6", "Claude Opus 4.6"],
+  ["MODEL_CLAUDE_4_5_OPUS", "Claude Opus 4.5"],
   ["claude-sonnet-5", "Claude Sonnet 5"],
+  ["claude-sonnet-4-6", "Claude Sonnet 4.6"],
   ["glm-5-2", "GLM-5.2"],
+  ["kimi-k3", "Kimi K3"],
   ["kimi-k2-7", "Kimi K2.7"],
+  ["kimi-k2-6", "Kimi K2.6"],
+  ["MODEL_GOOGLE_GEMINI_3_0_FLASH", "Gemini 3 Flash"],
+  ["gemini-3-7-flash", "Gemini 3.7 Flash"],
+  ["gemini-3-6-flash", "Gemini 3.6 Flash"],
+  ["gemini-3-5-flash", "Gemini 3.5 Flash"],
   ["gemini-3-1-pro", "Gemini 3.1 Pro"],
+  ["MODEL_GOOGLE_GEMINI_2_5_PRO", "Gemini 2.5 Pro"],
+  ["grok-4-6", "Grok 4.6"],
   ["grok-4-5", "Grok 4.5"],
-  ["swe-1-7", "SWE-1.7"]
+  ["swe-1-7-lightning", "SWE-1.7 Lightning"],
+  ["swe-1-7", "SWE-1.7"],
+  ["swe-1-6", "SWE-1.6"],
+  ["deepseek-v4-flash", "DeepSeek V4 Flash"],
+  ["deepseek-v4-pro", "DeepSeek V4 Pro"],
+  ["gpt-5-3-codex", "GPT-5.3-Codex"],
+  ["gpt-5-4-mini", "GPT-5.4 Mini"],
+  ["gpt-5-5", "GPT-5.5"],
+  ["gpt-5-4", "GPT-5.4"],
+  ["MODEL_GPT_5_2", "GPT-5.2"]
 ];
 
 function stardustUnique(values) {
@@ -67,10 +86,46 @@ function stardustPreferredEffort(values, preferred) {
 function stardustEncodedEffort(tokens) {
   let effort;
   for (const token of tokens) {
-    if (token === "none") effort = "off";
+    if (token === "none" || token === "no") effort = "off";
     else if (["minimal", "low", "medium", "high", "xhigh", "max", "ultra"].includes(token)) effort = token;
   }
+  if (effort === void 0 && (tokens.includes("thinking") || tokens.includes("reasoning"))) effort = "high";
   return effort;
+}
+
+function stardustSlug(value) {
+  return String(value).toLowerCase().replace(/[^a-z0-9]+/gu, "-").replace(/^-|-$/gu, "") || "model";
+}
+
+function stardustDynamicWindsurfFamily(model) {
+  const label = model.name || model.id;
+  const id = model.id || "";
+  const source = String(id) + " " + String(label);
+  const trusted = /^(?:MODEL_|claude-|gemini-|gpt-|grok-|glm-|kimi-|deepseek-|swe-|inkling-|nemotron-|o3\b|xai-)/iu.test(id)
+    || /^(?:Claude|Gemini|GPT|Grok|GLM|Kimi|DeepSeek|SWE|Inkling|Nemotron|o3\b|xAI)\b/u.test(label);
+  if (!trusted) return void 0;
+  const tokens = source.toLowerCase().split(/[^a-z0-9]+/u).filter(Boolean);
+  const oneMillion = tokens.includes("1m");
+  const speed = tokens.some((token) => token === "fast" || token === "priority")
+    ? STARDUST_FAST_SPEED
+    : STARDUST_STANDARD_SPEED;
+  const effort = model.stardustVariantEffort ?? stardustEncodedEffort(tokens);
+  const familyName = label
+    .replace(/\b1M\b/giu, "")
+    .replace(/\bFast\b/giu, "")
+    .replace(/\b(?:No|None|Minimal|Low|Medium|High|XHigh|Max|Ultra)\s+(?:Thinking|Reasoning)\b/giu, "")
+    .replace(/\b(?:Thinking|Reasoning)\b/giu, "")
+    .replace(/\b(?:None|Minimal|Low|Medium|High|XHigh|Max|Ultra)\b$/giu, "")
+    .replace(/\s+/gu, " ")
+    .trim();
+  if (familyName === "") return void 0;
+  return {
+    familyId: "dynamic::" + stardustSlug(familyName),
+    familyName,
+    effort,
+    speed,
+    context: oneMillion ? STARDUST_ONE_MILLION_CONTEXT : STARDUST_DEFAULT_CONTEXT
+  };
 }
 
 function stardustWindsurfVariant(model) {
@@ -81,18 +136,20 @@ function stardustWindsurfVariant(model) {
     }
   }
   if (family === void 0) return {
-    familyId: model.id,
-    familyName: model.name,
-    effort: model.stardustVariantEffort ?? model.reasoning?.defaultEffort,
-    speed: STARDUST_STANDARD_SPEED,
-    context: STARDUST_DEFAULT_CONTEXT,
+    ...(stardustDynamicWindsurfFamily(model) ?? {
+      familyId: model.id,
+      familyName: model.name,
+      effort: model.stardustVariantEffort ?? model.reasoning?.defaultEffort,
+      speed: STARDUST_STANDARD_SPEED,
+      context: STARDUST_DEFAULT_CONTEXT
+    }),
     raw: model,
     parsed: false
   };
   const suffix = model.id.slice(family[0].length).replace(/^[-_]+/u, "").toLowerCase();
   const tokens = suffix.split(/[-_]+/u).filter(Boolean);
   const oneMillion = tokens.includes("1m");
-  const speed = tokens.some((token) => token === "fast" || token === "priority" || token === "lightning")
+  const speed = tokens.some((token) => token === "fast" || token === "priority")
     ? STARDUST_FAST_SPEED
     : STARDUST_STANDARD_SPEED;
   let effort = model.stardustVariantEffort ?? stardustEncodedEffort(tokens);
@@ -106,6 +163,10 @@ function stardustWindsurfVariant(model) {
     raw: model,
     parsed: true
   };
+}
+
+function stardustFamilyHasEffort(family) {
+  return family?.variants.some((variant) => variant.effort !== void 0 || (variant.efforts?.length ?? 0) > 0) === true;
 }
 
 function stardustFacetGroups(groups) {
@@ -183,16 +244,18 @@ function stardustFamilyEfforts(family, speed, context) {
     if (speed !== void 0 && variant.speed !== speed) return false;
     return context === void 0 || (variant.context ?? STARDUST_DEFAULT_CONTEXT) === context;
   });
-  return stardustSortEfforts(matching.flatMap((variant) => variant.efforts ?? (variant.effort === void 0 ? [] : [variant.effort])));
+  const hasEffort = stardustFamilyHasEffort(family);
+  return stardustSortEfforts(matching.flatMap((variant) => variant.efforts ?? (variant.effort === void 0 ? hasEffort ? ["off"] : [] : [variant.effort])));
 }
 
 function stardustFamilySpeeds(family, effort, context) {
   if (family === void 0) return [];
+  const hasEffort = stardustFamilyHasEffort(family);
   return stardustUnique(family.variants.filter((variant) => {
     if (context !== void 0 && (variant.context ?? STARDUST_DEFAULT_CONTEXT) !== context) return false;
     if (effort === void 0) return true;
     if (variant.efforts !== void 0) return variant.efforts.includes(effort);
-    return variant.effort === effort;
+    return (variant.effort ?? (hasEffort ? "off" : void 0)) === effort;
   }).map((variant) => variant.speed));
 }
 
@@ -215,11 +278,13 @@ function stardustSelectionForFamily(family, requested = {}) {
       : availableSpeeds[0];
   const availableEfforts = stardustFamilyEfforts(family, speed, context);
   effort = stardustPreferredEffort(availableEfforts, effort);
+  const hasEffort = stardustFamilyHasEffort(family);
   const variant = family.variants.find((entry) => {
     if ((entry.context ?? STARDUST_DEFAULT_CONTEXT) !== context) return false;
     if (entry.speed !== speed) return false;
     if (entry.efforts !== void 0) return effort === void 0 || entry.efforts.includes(effort);
-    return entry.effort === effort || entry.effort === void 0 && effort === void 0;
+    const entryEffort = entry.effort ?? (hasEffort ? "off" : void 0);
+    return entryEffort === effort || entryEffort === void 0 && effort === void 0;
   });
   if (variant === void 0) return void 0;
   return {
@@ -248,6 +313,9 @@ export const MODEL_MENU_STYLE = `
 .dsh-ms-panel{position:static!important;bottom:auto!important;right:auto!important;flex:none;max-height:var(--dsh-ms-root-max-height,var(--dsh-ms-max-height,min(468px,100vh - 72px)));overflow-y:auto}
 .dsh-ms-sub{width:min(268px,calc(100vw - 32px));max-height:var(--dsh-ms-sub-max-height,min(420px,100vh - 72px));overflow-y:auto}
 .dsh-ms-subhead{padding:6px 10px 4px;color:var(--dsw-alias-label-tertiary);font-size:12px;line-height:18px}
+.dsh-ms-provider-scroll{max-height:min(238px,calc(var(--dsh-ms-sub-max-height,420px) - 96px));overflow-y:auto;overscroll-behavior:contain;padding-right:2px;margin-right:-2px}
+.dsh-ms-provider-scroll::-webkit-scrollbar{width:8px}
+.dsh-ms-provider-scroll::-webkit-scrollbar-thumb{background:var(--dsw-alias-border-l3);border-radius:999px}
 .dsh-ms-cell-open{background:var(--dsw-alias-interactive-bg-hover)}
 .dsh-ms-adv{margin-top:2px;border-top:1px solid var(--dsw-alias-border-l2);padding-top:2px}
 .dsh-ms-advhead{display:flex;align-items:center;gap:4px;width:100%;height:30px;padding:0 10px;border:none;border-radius:8px;background:0 0;color:var(--dsw-alias-label-tertiary);font:inherit;font-size:12.5px;line-height:18px;cursor:pointer;text-align:left}
@@ -394,13 +462,17 @@ export const MODEL_SELECT_BROWSER_SOURCE = `\n\t\tconst STARDUST_MODEL_MENU_CSS 
 					const viewportHeight = Math.max(window.innerHeight || 0, 320);
 					const maxWidth = Math.max(240, viewportWidth - margin * 2);
 					const rootPanel = wrap.querySelector(".dsh-ms-panel:not(.dsh-ms-sub)") ?? wrap;
+					const subPanel = wrap.querySelector(".dsh-ms-sub");
 					const wrapRect = wrap.getBoundingClientRect();
 					const rootRect = rootPanel.getBoundingClientRect();
 					const measuredWidth = Math.min(Math.ceil(wrap.offsetWidth || wrapRect.width || 280), maxWidth);
 					const maxHeight = Math.max(180, viewportHeight - margin * 2);
 					const rootMaxHeight = Math.min(468, maxHeight);
 					const subMaxHeight = Math.min(420, maxHeight);
-					const measuredHeight = Math.min(Math.ceil(rootPanel.scrollHeight || rootRect.height || 320), rootMaxHeight);
+					const subRect = subPanel?.getBoundingClientRect();
+					const measuredRootHeight = Math.min(Math.ceil(rootPanel.scrollHeight || rootRect.height || 320), rootMaxHeight);
+					const measuredSubHeight = subPanel === null ? 0 : Math.min(Math.ceil(subPanel.scrollHeight || subRect?.height || 320), subMaxHeight);
+					const measuredHeight = Math.max(measuredRootHeight, measuredSubHeight, Math.ceil(wrapRect.height || 0));
 					const left = Math.min(Math.max(margin, Math.round(anchor.right - measuredWidth)), viewportWidth - measuredWidth - margin);
 					const preferredTop = Math.round(anchor.top - measuredHeight - margin);
 					const fallbackTop = Math.round(anchor.bottom + margin);
@@ -737,13 +809,16 @@ export const MODEL_SELECT_BROWSER_SOURCE = `\n\t\tconst STARDUST_MODEL_MENU_CSS 
 									className: ModelSelect_module_css_default.group,
 									children: [
 										(0, react_jsx_runtime.jsx)("div", { className: ModelSelect_module_css_default.groupTitle, children: group.name }),
-										...group.families.map((family) => option({
-											key: group.id + ":" + family.id,
-											selected: currentFamily?.provider === family.provider && currentFamily.id === family.id,
-											title: family.name,
-											description: family.description,
-											onClick: () => chooseFamily(family)
-										}))
+										(0, react_jsx_runtime.jsx)("div", {
+											className: group.id === "windsurf" && group.families.length > 8 ? "dsh-ms-provider-scroll" : void 0,
+											children: group.families.map((family) => option({
+												key: group.id + ":" + family.id,
+												selected: currentFamily?.provider === family.provider && currentFamily.id === family.id,
+												title: family.name,
+												description: family.description,
+												onClick: () => chooseFamily(family)
+											}))
+										})
 									]
 								}, group.id)) }),
 								state.status === "ready" && facetGroups.every((group) => group.families.length === 0) ? (0, react_jsx_runtime.jsx)("div", { className: ModelSelect_module_css_default.empty, children: t("empty.models") }) : null
