@@ -311,6 +311,7 @@ function stardustSelectionForFamily(family, requested = {}) {
 export const MODEL_MENU_STYLE = `
 .dsh-ms-wrap{position:fixed;z-index:1000;left:var(--dsh-ms-left,8px);top:var(--dsh-ms-top,8px);bottom:auto!important;right:auto!important;display:flex;flex-direction:row-reverse;align-items:flex-start;align-content:flex-start;justify-content:flex-end;flex-wrap:nowrap;gap:6px;max-width:calc(100vw - 16px);max-height:var(--dsh-ms-max-height,calc(100vh - 16px));overflow:visible}
 .dsh-ms-panel{position:static!important;bottom:auto!important;right:auto!important;flex:none;max-height:var(--dsh-ms-root-max-height,var(--dsh-ms-max-height,min(468px,100vh - 72px)));overflow-y:auto}
+.dsh-ms-panel:not(.dsh-ms-sub){transform:translateY(var(--dsh-ms-root-offset-y,0px))}
 .dsh-ms-sub{width:min(268px,calc(100vw - 32px));max-height:var(--dsh-ms-sub-max-height,min(420px,100vh - 72px));overflow-y:auto}
 .dsh-ms-subhead{padding:6px 10px 4px;color:var(--dsw-alias-label-tertiary);font-size:12px;line-height:18px}
 .dsh-ms-provider-scroll{max-height:min(238px,calc(var(--dsh-ms-sub-max-height,420px) - 96px));overflow-y:auto;overscroll-behavior:contain;padding-right:2px;margin-right:-2px}
@@ -479,12 +480,18 @@ export const MODEL_SELECT_BROWSER_SOURCE = `\n\t\tconst STARDUST_MODEL_MENU_CSS 
 					const top = preferredTop >= margin
 						? preferredTop
 						: Math.min(Math.max(margin, fallbackTop), viewportHeight - measuredHeight - margin);
+					const rootPreferredTop = Math.round(anchor.top - measuredRootHeight - margin);
+					const rootFallbackTop = Math.round(anchor.bottom + margin);
+					const rootTop = rootPreferredTop >= margin
+						? rootPreferredTop
+						: Math.min(Math.max(margin, rootFallbackTop), viewportHeight - measuredRootHeight - margin);
 					setMenuBox({
 						left: Math.max(margin, left),
 						top: Math.max(margin, top),
 						maxHeight,
 						rootMaxHeight,
-						subMaxHeight
+						subMaxHeight,
+						rootOffsetY: Math.max(0, rootTop - Math.max(margin, top))
 					});
 				};
 				const schedule = () => {
@@ -584,7 +591,8 @@ export const MODEL_SELECT_BROWSER_SOURCE = `\n\t\tconst STARDUST_MODEL_MENU_CSS 
 				"--dsh-ms-top": menuBox.top + "px",
 				"--dsh-ms-max-height": menuBox.maxHeight + "px",
 				"--dsh-ms-root-max-height": menuBox.rootMaxHeight + "px",
-				"--dsh-ms-sub-max-height": menuBox.subMaxHeight + "px"
+				"--dsh-ms-sub-max-height": menuBox.subMaxHeight + "px",
+				"--dsh-ms-root-offset-y": menuBox.rootOffsetY + "px"
 			};
 			const rootCell = (label, value, target) => (0, react_jsx_runtime.jsxs)("button", {
 				key: target,

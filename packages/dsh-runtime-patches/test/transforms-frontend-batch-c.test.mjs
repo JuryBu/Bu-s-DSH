@@ -191,6 +191,7 @@ test("模型菜单样式固定到视口并由组件钳制位置", () => {
   assert.match(MODEL_MENU_STYLE, /left:var\(--dsh-ms-left,8px\)/u);
   assert.match(MODEL_MENU_STYLE, /top:var\(--dsh-ms-top,8px\)/u);
   assert.match(MODEL_MENU_STYLE, /\.dsh-ms-panel\{position:static!important/u);
+  assert.match(MODEL_MENU_STYLE, /\.dsh-ms-panel:not\(\.dsh-ms-sub\)\{transform:translateY\(var\(--dsh-ms-root-offset-y,0px\)\)\}/u);
   assert.match(MODEL_MENU_STYLE, /\.dsh-ms-provider-scroll\{[^}]*overflow-y:auto/u);
   assert.match(MODEL_MENU_STYLE, /--dsh-ms-sub-max-height/u);
   assert.match(MODEL_SELECT_BROWSER_SOURCE, /const wrapRef = \(0, react\.useRef\)\(null\)/u);
@@ -198,5 +199,7 @@ test("模型菜单样式固定到视口并由组件钳制位置", () => {
   assert.match(MODEL_SELECT_BROWSER_SOURCE, /requestAnimationFrame\(update\)/u);
   assert.ok(MODEL_SELECT_BROWSER_SOURCE.includes('const subPanel = wrap.querySelector(".dsh-ms-sub");'));
   assert.ok(MODEL_SELECT_BROWSER_SOURCE.includes("const measuredSubHeight = subPanel === null ? 0"));
+  assert.ok(MODEL_SELECT_BROWSER_SOURCE.includes("const rootPreferredTop = Math.round(anchor.top - measuredRootHeight - margin);"));
+  assert.ok(MODEL_SELECT_BROWSER_SOURCE.includes('"--dsh-ms-root-offset-y": menuBox.rootOffsetY + "px"'));
   assert.ok(MODEL_SELECT_BROWSER_SOURCE.includes('className: group.id === "windsurf" && group.families.length > 8 ? "dsh-ms-provider-scroll" : void 0'));
 });
