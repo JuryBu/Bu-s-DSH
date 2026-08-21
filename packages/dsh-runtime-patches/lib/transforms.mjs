@@ -8,6 +8,7 @@ import {
   patchAppearanceThemeSource,
   patchContextStatusCardSource,
   patchEditResendShellSource,
+  patchFileViewerSource,
   patchSelectionAnnotationSource,
   patchTurnProcessCollapseSource,
   patchWorkspaceShellSource,
@@ -2191,13 +2192,15 @@ export function patchConversationActivityPresentationSource(source) {
 }
 
 export function patchConversationUiSource(source) {
-  return patchWorkspaceShellSource(
-    patchEditResendShellSource(
-      patchTurnProcessCollapseSource(
-        patchContextStatusCardSource(
-          patchSelectionAnnotationSource(
-            patchActivityTrackFrontendSource(
-              patchConversationActivityPresentationSource(patchContextMeterThresholdsSource(source)),
+  return patchFileViewerSource(
+    patchWorkspaceShellSource(
+      patchEditResendShellSource(
+        patchTurnProcessCollapseSource(
+          patchContextStatusCardSource(
+            patchSelectionAnnotationSource(
+              patchActivityTrackFrontendSource(
+                patchConversationActivityPresentationSource(patchContextMeterThresholdsSource(source)),
+              ),
             ),
           ),
         ),

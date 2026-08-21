@@ -484,6 +484,7 @@ const SELECTION_ANNOTATION_CSS = [
   ".dsh-annotation-composer-edit{margin:0 10px 6px}",
   ".dsh-annotation-chip,.dsh-annotation-history-chip{display:inline-flex;align-items:center;gap:6px;min-height:30px;border:1px solid var(--dsw-alias-border-l1);border-radius:999px;padding:0 10px;background:var(--dsw-alias-bg-elevated,var(--dsw-alias-bg-base));color:var(--dsw-alias-label-primary);font:13px/1.2 inherit;box-shadow:0 2px 10px color-mix(in srgb,var(--dsw-alias-label-primary) 8%,transparent);cursor:pointer}",
   ".dsh-annotation-chip::before,.dsh-annotation-history-chip::before{content:\"\";width:16px;height:16px;opacity:.82;background:currentColor;-webkit-mask:url('data:image/svg+xml,%3Csvg%20viewBox%3D%220%200%2016%2016%22%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%3E%3Cpath%20fill%3D%22%23000%22%20fill-rule%3D%22evenodd%22%20d%3D%22M3.2%202.4A2.2%202.2%200%200%200%201%204.6v4.6a2.2%202.2%200%200%200%202.2%202.2h1.1v2.05c0%20.45.54.68.86.36l2.41-2.41h5.23A2.2%202.2%200%200%200%2015%209.2V4.6a2.2%202.2%200%200%200-2.2-2.2H3.2Zm0%201.2h9.6a1%201%200%200%201%201%201v4.6a1%201%200%200%201-1%201H7.07l-1.57%201.57V10.2H3.2a1%201%200%200%201-1-1V4.6a1%201%200%200%201%201-1Z%22/%3E%3C/svg%3E') center/contain no-repeat;mask:url('data:image/svg+xml,%3Csvg%20viewBox%3D%220%200%2016%2016%22%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%3E%3Cpath%20fill%3D%22%23000%22%20fill-rule%3D%22evenodd%22%20d%3D%22M3.2%202.4A2.2%202.2%200%200%200%201%204.6v4.6a2.2%202.2%200%200%200%202.2%202.2h1.1v2.05c0%20.45.54.68.86.36l2.41-2.41h5.23A2.2%202.2%200%200%200%2015%209.2V4.6a2.2%202.2%200%200%200-2.2-2.2H3.2Zm0%201.2h9.6a1%201%200%200%201%201%201v4.6a1%201%200%200%201-1%201H7.07l-1.57%201.57V10.2H3.2a1%201%200%200%201-1-1V4.6a1%201%200%200%201%201-1Z%22/%3E%3C/svg%3E') center/contain no-repeat}",
+  ".dsh-workspace-context-chip::before{content:\"</>\";width:auto;height:auto;opacity:.75;background:none;-webkit-mask:none;mask:none;font:700 12px/1 var(--dsh-workspace-file-mono,'Cascadia Code',Consolas,monospace)}",
   ".dsh-annotation-chip button{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;margin-right:-4px;border:0;border-radius:999px;background:transparent;color:var(--dsw-alias-label-secondary);font:16px/1 inherit;cursor:pointer}",
   ".dsh-annotation-chip button:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}",
   ".dsh-annotation-preview{position:fixed;z-index:2147483002;width:min(420px,calc(100vw - 32px));max-height:min(520px,calc(100vh - 32px));overflow:auto;padding:14px;border-radius:18px;border:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-elevated,var(--dsw-alias-bg-base));box-shadow:0 18px 48px color-mix(in srgb,var(--dsw-alias-label-primary) 20%,transparent);color:var(--dsw-alias-label-primary);font:13px/1.45 inherit}",
@@ -513,6 +514,7 @@ const SELECTION_ANNOTATION_RUNTIME_SOURCE = `
 			let selectedSourceKind = null;
 			let nextAnnotationId = 1;
 			let pendingAnnotations = [];
+			let pendingWorkspaceContextItems = [];
 			let selectionMarkerRecords = [];
 			let editSelectionMarkerRecords = [];
 			let editAnnotationSignature = null;
@@ -522,6 +524,13 @@ const SELECTION_ANNOTATION_RUNTIME_SOURCE = `
 			let activeAnnotationSessionId = null;
 			const DSH_ANNOTATION_STORAGE_PREFIX = "__dsh_selection_annotations:";
 			const DSH_LEGACY_ANNOTATION_STORAGE_KEY = DSH_ANNOTATION_STORAGE_PREFIX + location.pathname + location.search;
+			const DSH_COMPOSER_CONTEXT_EVENTS = {
+				"browser-element": "dsh:composer:add-browser-element",
+				"console-errors": "dsh:composer:add-console-errors",
+				"workspace-annotation": "dsh:composer:add-workspace-annotations",
+				"file-selection": "dsh:composer:add-file-selection"
+			};
+			const DSH_WORKSPACE_CONTEXT_TAG = "workspace-context";
 			function dshCurrentSessionId() {
 				try {
 					const parsed = JSON.parse(localStorage.getItem("dsh.sessions.current") ?? "{}");
@@ -631,6 +640,7 @@ const SELECTION_ANNOTATION_RUNTIME_SOURCE = `
 				dshPersistAnnotations();
 				activeAnnotationSessionId = nextSessionId;
 				pendingAnnotations = [];
+				pendingWorkspaceContextItems = [];
 				pendingSubmitSignature = null;
 				dshClearSelectionMarkers();
 				dshHideAnnotationPreview();
@@ -699,6 +709,84 @@ const SELECTION_ANNOTATION_RUNTIME_SOURCE = `
 			function dshAnnotationSignature(annotations = pendingAnnotations) {
 				return JSON.stringify(dshAnnotationPayload(annotations));
 			}
+			function dshJsonSafe(value, depth = 0) {
+				if (depth > 8) return null;
+				if (value === null) return null;
+				if (typeof value === "string" || typeof value === "boolean") return value;
+				if (typeof value === "number") return Number.isFinite(value) ? value : null;
+				if (Array.isArray(value)) return value.map((item) => dshJsonSafe(item, depth + 1));
+				if (typeof value === "object") {
+					const result = {};
+					for (const [key, item] of Object.entries(value)) {
+						const safe = dshJsonSafe(item, depth + 1);
+						if (safe !== undefined) result[key] = safe;
+					}
+					return result;
+				}
+				return undefined;
+			}
+			function dshNormalizeComposerContextItem(kind, detail) {
+				const safe = dshJsonSafe(detail);
+				if (safe === null || typeof safe !== "object" || Array.isArray(safe)) return null;
+				const expected = {
+					"browser-element": "browser-element",
+					"console-errors": "console-errors",
+					"workspace-annotation": "workspace-file-annotations",
+					"file-selection": "workspace-file"
+				}[kind];
+				if (expected === undefined || safe.kind !== expected) return null;
+				return { ...safe, addedAt: new Date().toISOString() };
+			}
+			function dshWorkspaceContextSignature(items = pendingWorkspaceContextItems) {
+				return JSON.stringify(items);
+			}
+			function dshSubmitSignature(annotations = pendingAnnotations, workspaceItems = pendingWorkspaceContextItems) {
+				return JSON.stringify({ annotations: dshAnnotationPayload(annotations), workspace: workspaceItems });
+			}
+			function dshWorkspaceContextBlock(items = pendingWorkspaceContextItems) {
+				if (!Array.isArray(items) || items.length === 0) return "";
+				return "\\n<" + DSH_WORKSPACE_CONTEXT_TAG + ">\\n" + JSON.stringify(items, null, 2) + "\\n</" + DSH_WORKSPACE_CONTEXT_TAG + ">\\n";
+			}
+			function dshWorkspaceContextLabel(item) {
+				if (item?.kind === "workspace-file") return "文件 " + (item.lineRange ?? "") + (item.path ? " · " + item.path.split(/[\\\\/]/).pop() : "");
+				if (item?.kind === "workspace-file-annotations") return "文件批注 " + (item.count ?? item.items?.length ?? 0) + " 条";
+				if (item?.kind === "browser-element") return "网页元素" + (item.selector ? " · " + item.selector : "");
+				if (item?.kind === "console-errors") return "控制台错误 " + (item.total ?? item.errors?.length ?? 0) + " 条";
+				return "工作区上下文";
+			}
+			function dshWorkspaceContextPreviewItems(items = pendingWorkspaceContextItems) {
+				const rows = [];
+				for (const item of items) {
+					if (item?.kind === "workspace-file") {
+						rows.push({ text: "[" + (item.path ?? "文件") + " " + (item.lineRange ?? "") + "]\\n" + (item.text ?? ""), annotation: item.annotation ?? "" });
+					} else if (item?.kind === "workspace-file-annotations") {
+						for (const entry of item.items ?? []) {
+							rows.push({ text: "[" + (entry.path ?? "文件") + " " + (entry.lineRange ?? "") + "]\\n" + (entry.text ?? ""), annotation: entry.annotation ?? "" });
+						}
+					} else {
+						rows.push({ text: dshWorkspaceContextLabel(item), annotation: JSON.stringify(item, null, 2) });
+					}
+				}
+				return rows;
+			}
+			function dshParseWorkspaceContextBlock(rawText) {
+				if (typeof rawText !== "string") return null;
+				const match = rawText.match(/<workspace-context>\\s*([\\s\\S]*?)\\s*<\\/workspace-context>/);
+				if (match === null) return null;
+				try {
+					const parsed = JSON.parse(match[1]);
+					if (!Array.isArray(parsed) || parsed.length === 0) return null;
+					return { items: parsed.filter((item) => item !== null && typeof item === "object"), visibleText: rawText.replace(match[0], "").trim() };
+				} catch {
+					return null;
+				}
+			}
+			function dshRemoveWorkspaceContext(index) {
+				if (index < 0 || index >= pendingWorkspaceContextItems.length) return;
+				pendingWorkspaceContextItems.splice(index, 1);
+				dshRenderComposerChip();
+				dshSyncAnnotationSubmitState();
+			}
 			function dshAnnotationMarkerSignature(annotations = pendingAnnotations) {
 				return JSON.stringify(annotations.map((item) => ({
 					text: item.text,
@@ -751,7 +839,7 @@ const SELECTION_ANNOTATION_RUNTIME_SOURCE = `
 				const card = dshFindComposerCard(textarea);
 				const button = card === null ? null : dshFindSubmitButton(card);
 				if (!(button instanceof HTMLButtonElement)) return;
-				if (pendingAnnotations.length > 0) {
+				if (pendingAnnotations.length > 0 || pendingWorkspaceContextItems.length > 0) {
 					button.disabled = false;
 					button.removeAttribute("disabled");
 					button.setAttribute("aria-disabled", "false");
@@ -806,14 +894,14 @@ const SELECTION_ANNOTATION_RUNTIME_SOURCE = `
 				dshSyncAnnotationSession();
 				const textarea = dshVisibleTextarea();
 				const oldChip = document.querySelector('.dsh-annotation-composer[data-dsh-annotation-target="main"]');
-				if (pendingAnnotations.length === 0 || textarea === null) {
+				if ((pendingAnnotations.length === 0 && pendingWorkspaceContextItems.length === 0) || textarea === null) {
 					oldChip?.remove();
 					dshSyncAnnotationSubmitState();
 					return false;
 				}
 				const card = dshFindComposerCard(textarea);
 				if (card === null) return false;
-				const signature = dshAnnotationSignature();
+				const signature = dshSubmitSignature();
 				if (oldChip !== null && oldChip.parentElement === card && oldChip.dataset.dshAnnotationSignature === signature) {
 					dshRenderSelectionMarkers();
 					dshSyncAnnotationSubmitState();
@@ -826,30 +914,55 @@ const SELECTION_ANNOTATION_RUNTIME_SOURCE = `
 				chipRow.dataset.dshAnnotationCount = String(pendingAnnotations.length);
 				chipRow.dataset.dshAnnotationSignature = signature;
 				chipRow.textContent = "";
-				const chip = document.createElement("span");
-				chip.className = "dsh-annotation-chip";
-				chip.tabIndex = 0;
-				chip.textContent = pendingAnnotations.length + " 条注释";
-				const showChipPreview = (event) => {
-					event.stopPropagation();
-					dshRenderAnnotationPreview(chip, pendingAnnotations);
-				};
-				chip.addEventListener("click", showChipPreview);
-				chip.addEventListener("mouseenter", showChipPreview);
-				const clear = document.createElement("button");
-				clear.type = "button";
-				clear.setAttribute("aria-label", "清除注释");
-				clear.textContent = "×";
-				clear.addEventListener("click", (event) => {
-					event.stopPropagation();
-					pendingAnnotations = [];
-					dshPersistAnnotations();
-					dshClearSelectionMarkers();
-					dshRenderComposerChip();
-					dshHideAnnotationPreview();
+				if (pendingAnnotations.length > 0) {
+					const chip = document.createElement("span");
+					chip.className = "dsh-annotation-chip";
+					chip.tabIndex = 0;
+					chip.textContent = pendingAnnotations.length + " 条注释";
+					const showChipPreview = (event) => {
+						event.stopPropagation();
+						dshRenderAnnotationPreview(chip, pendingAnnotations);
+					};
+					chip.addEventListener("click", showChipPreview);
+					chip.addEventListener("mouseenter", showChipPreview);
+					const clear = document.createElement("button");
+					clear.type = "button";
+					clear.setAttribute("aria-label", "清除注释");
+					clear.textContent = "×";
+					clear.addEventListener("click", (event) => {
+						event.stopPropagation();
+						pendingAnnotations = [];
+						dshPersistAnnotations();
+						dshClearSelectionMarkers();
+						dshRenderComposerChip();
+						dshHideAnnotationPreview();
+					});
+					chip.appendChild(clear);
+					chipRow.appendChild(chip);
+				}
+				pendingWorkspaceContextItems.forEach((item, index) => {
+					const chip = document.createElement("span");
+					chip.className = "dsh-annotation-chip dsh-workspace-context-chip";
+					chip.tabIndex = 0;
+					chip.textContent = dshWorkspaceContextLabel(item);
+					const showChipPreview = (event) => {
+						event.stopPropagation();
+						dshRenderAnnotationPreview(chip, dshWorkspaceContextPreviewItems([item]));
+					};
+					chip.addEventListener("click", showChipPreview);
+					chip.addEventListener("mouseenter", showChipPreview);
+					const clear = document.createElement("button");
+					clear.type = "button";
+					clear.setAttribute("aria-label", "移除工作区上下文");
+					clear.textContent = "×";
+					clear.addEventListener("click", (event) => {
+						event.stopPropagation();
+						dshRemoveWorkspaceContext(index);
+						dshHideAnnotationPreview();
+					});
+					chip.appendChild(clear);
+					chipRow.appendChild(chip);
 				});
-				chip.appendChild(clear);
-				chipRow.appendChild(chip);
 				const editScroll = card.querySelector?.("[data-dsh-edit-scroll]") ?? null;
 				const directChild = dshFindDirectChild(card, editScroll ?? scroll ?? textarea);
 				if (oldChip === null || oldChip.parentElement !== card || oldChip.nextElementSibling !== (editScroll ?? directChild)) card.insertBefore(chipRow, editScroll ?? directChild ?? card.firstChild);
@@ -1167,10 +1280,10 @@ const SELECTION_ANNOTATION_RUNTIME_SOURCE = `
 			function dshPrepareTextareaForSubmit(textarea) {
 				if (textarea?.closest?.(".dsh-selection-note") !== null) return false;
 				if (dshTextareaIsEdit(textarea)) return false;
-				if (pendingAnnotations.length === 0 || textarea === null || textarea.dataset.dshAnnotationPrepared === "true") return false;
+				if ((pendingAnnotations.length === 0 && pendingWorkspaceContextItems.length === 0) || textarea === null || textarea.dataset.dshAnnotationPrepared === "true") return false;
 				const originalValue = textarea.value;
-				const block = dshAnnotationBlock();
-				const submitSignature = dshAnnotationSignature();
+				const block = (pendingAnnotations.length > 0 ? dshAnnotationBlock() : "") + dshWorkspaceContextBlock();
+				const submitSignature = dshSubmitSignature();
 				const spacer = originalValue === "" || originalValue.endsWith("\\n") ? "" : "\\n";
 				const preparedValue = originalValue + spacer + block;
 				pendingSubmitSignature = submitSignature;
@@ -1186,6 +1299,7 @@ const SELECTION_ANNOTATION_RUNTIME_SOURCE = `
 				window.setTimeout(() => {
 					if (textarea.value === "") {
 						pendingAnnotations = [];
+						pendingWorkspaceContextItems = [];
 						pendingSubmitSignature = null;
 						dshPersistAnnotations();
 						dshClearSelectionMarkers();
@@ -1219,26 +1333,45 @@ const SELECTION_ANNOTATION_RUNTIME_SOURCE = `
 					if (element.closest("[data-dsh-edit-shell]") !== null) return false;
 					if (element.closest(".dsh-annotation-preview,.dsh-annotation-composer,.dsh-annotation-history-chip") !== null) return false;
 					const text = element.textContent ?? "";
-					if (!text.includes("<response-annotations>")) return false;
-					return !Array.from(element.children).some((child) => (child.textContent ?? "").includes("<response-annotations>"));
+					if (!text.includes("<response-annotations>") && !text.includes("<workspace-context>")) return false;
+					return !Array.from(element.children).some((child) => {
+						const childText = child.textContent ?? "";
+						return childText.includes("<response-annotations>") || childText.includes("<workspace-context>");
+					});
 				});
 				for (const element of elements) {
 					if (element.dataset.dshAnnotationHistory === "true") continue;
-					const parsed = dshParseAnnotationBlock(element.textContent ?? "");
-					if (parsed === null) continue;
+					const rawText = element.textContent ?? "";
+					const parsed = dshParseAnnotationBlock(rawText);
+					const workspaceParsed = dshParseWorkspaceContextBlock(parsed?.visibleText ?? rawText);
+					if (parsed === null && workspaceParsed === null) continue;
 					element.dataset.dshAnnotationHistory = "true";
-					element.textContent = parsed.visibleText;
-					const chip = document.createElement("span");
-					chip.className = "dsh-annotation-history-chip";
-					chip.tabIndex = 0;
-					chip.textContent = parsed.annotations.length + " 条注释";
-					chip.addEventListener("click", (event) => {
-						event.stopPropagation();
-						dshRenderAnnotationPreview(chip, parsed.annotations);
-					});
-					element.insertAdjacentElement("beforebegin", chip);
-					if (pendingSubmitSignature !== null && dshAnnotationSignature(parsed.annotations) === pendingSubmitSignature) {
+					element.textContent = (workspaceParsed?.visibleText ?? parsed?.visibleText ?? rawText).trim();
+					if (parsed !== null) {
+						const chip = document.createElement("span");
+						chip.className = "dsh-annotation-history-chip";
+						chip.tabIndex = 0;
+						chip.textContent = parsed.annotations.length + " 条注释";
+						chip.addEventListener("click", (event) => {
+							event.stopPropagation();
+							dshRenderAnnotationPreview(chip, parsed.annotations);
+						});
+						element.insertAdjacentElement("beforebegin", chip);
+					}
+					if (workspaceParsed !== null) {
+						const chip = document.createElement("span");
+						chip.className = "dsh-annotation-history-chip dsh-workspace-context-chip";
+						chip.tabIndex = 0;
+						chip.textContent = workspaceParsed.items.length + " 条工作区上下文";
+						chip.addEventListener("click", (event) => {
+							event.stopPropagation();
+							dshRenderAnnotationPreview(chip, dshWorkspaceContextPreviewItems(workspaceParsed.items));
+						});
+						element.insertAdjacentElement("beforebegin", chip);
+					}
+					if (pendingSubmitSignature !== null && dshSubmitSignature(parsed?.annotations ?? [], workspaceParsed?.items ?? pendingWorkspaceContextItems) === pendingSubmitSignature) {
 						pendingAnnotations = [];
+						pendingWorkspaceContextItems = [];
 						pendingSubmitSignature = null;
 						dshPersistAnnotations();
 						dshClearSelectionMarkers();
@@ -1372,6 +1505,17 @@ const SELECTION_ANNOTATION_RUNTIME_SOURCE = `
 				}, 0);
 			}
 			dshLoadAnnotations();
+			window.__dshComposerAccepts = (kind) => Object.prototype.hasOwnProperty.call(DSH_COMPOSER_CONTEXT_EVENTS, kind) && dshVisibleTextarea() !== null;
+			for (const [kind, eventName] of Object.entries(DSH_COMPOSER_CONTEXT_EVENTS)) {
+				window.addEventListener(eventName, (event) => {
+					const item = dshNormalizeComposerContextItem(kind, event?.detail);
+					if (item === null) return;
+					pendingWorkspaceContextItems.push(item);
+					dshRenderComposerChip();
+					dshSyncAnnotationSubmitState();
+				});
+			}
+			window.dispatchEvent(new CustomEvent("dsh:composer:ready"));
 			window.setTimeout(dshRenderComposerChip, 50);
 			window.setTimeout(dshRenderEditAnnotationChip, 50);
 			window.setTimeout(dshDecorateHistoryAnnotations, 50);
@@ -1539,7 +1683,21 @@ export {
   DSH_BROWSER_CONSOLE_ERRORS_EVENT,
   DSH_EMBEDDED_BROWSER_BOUNDS_EVENT,
   DSH_EMBEDDED_BROWSER_MESSAGE_TYPE,
+  DSH_COMPOSER_EVENTS,
   DSH_WORKSPACE_LOCAL_KEY,
   DSH_WORKSPACE_SHELL_STYLE,
   patchWorkspaceShellSource,
 } from "./frontend/workspace-panel.mjs";
+
+export {
+  DSH_FILE_ADAPTER_KEY,
+  DSH_FILE_ANNOTATION_EVENT,
+  DSH_FILE_ANNOTATION_STORAGE_KEY,
+  DSH_FILE_CAPABILITY_KEYS,
+  DSH_FILE_COMPOSER_READY_EVENT,
+  DSH_FILE_SELECTION_EVENT,
+  DSH_FILE_VIEWER_RUNTIME_SOURCE,
+  DSH_FILE_VIEWER_STYLE,
+  DSH_FILE_WRITE_ENABLED,
+  patchFileViewerSource,
+} from "./frontend/file-viewer.mjs";

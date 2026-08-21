@@ -18,7 +18,7 @@
  *   （同时派发 `dsh:embedded-browser:set-bounds` DOM 事件供普通浏览器 mock 观察）。
  * - 终端与文件本轮无后端，做占位与禁用说明，不启动 shell、不伪造输出。
  * - 元素/控制台回传只**接收** `dsh:browser:element-picked`，自己不拾取；composer
- *   事件按 kind 拆三个名字派发，不写 textarea，也不复用 `dsh:composer:add-text`。
+ *   事件按 kind 拆开派发，不写 textarea，也不复用 `dsh:composer:add-text`。
  *
  * 依赖边界（P15-11.2）：纯 DOM 实现，不 require 任何包、不碰 `fs`/`path`/`crypto`、
  * 不跨 feature UI 包引用，图标用 inline SVG。
@@ -55,6 +55,7 @@ export const DSH_COMPOSER_EVENTS = {
   "browser-element": "dsh:composer:add-browser-element",
   "console-errors": "dsh:composer:add-console-errors",
   "workspace-annotation": "dsh:composer:add-workspace-annotations",
+  "file-selection": "dsh:composer:add-file-selection",
 };
 export const DSH_BROWSER_ELEMENT_PICKED_EVENT = "dsh:browser:element-picked";
 /** R4 D2：C#/第二 WebView2 → 前端的控制台错误批次。 */

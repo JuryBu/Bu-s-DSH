@@ -281,6 +281,7 @@ test("composer 事件名按 kind 拆开，禁止复用 add-text", () => {
     "browser-element": "dsh:composer:add-browser-element",
     "console-errors": "dsh:composer:add-console-errors",
     "workspace-annotation": "dsh:composer:add-workspace-annotations",
+    "file-selection": "dsh:composer:add-file-selection",
   });
   assert.equal(Object.values(DSH_COMPOSER_EVENTS).includes("dsh:composer:add-text"), false);
 });
@@ -329,7 +330,7 @@ test("干净基线上锚点唯一命中，产物语法有效且含契约标记",
   assert.ok(!patched.includes("dsh-workspace-overlay"));
 });
 
-test("patchConversationUiSource 主链已包含 W3，组合后语法有效且各标志恰好一次", { skip: baselineAvailable ? false : "缺少干净基线 release" }, () => {
+test("patchConversationUiSource 主链已包含 W3/W4，组合后语法有效且各标志恰好一次", { skip: baselineAvailable ? false : "缺少干净基线 release" }, () => {
   const source = conversationBaseline();
   const full = patchConversationUiSource(source);
   assertSyntaxOk("stage11-with-workspace", full);
@@ -337,5 +338,6 @@ test("patchConversationUiSource 主链已包含 W3，组合后语法有效且各
     assert.equal(occurrences(full, marker), 1, `${marker} 必须恰好一次`);
   }
   assert.equal(occurrences(full, "function installDshWorkspaceShell("), 1);
+  assert.equal(occurrences(full, "function installDshFileViewer("), 1);
   assert.throws(() => patchWorkspaceShellSource(full), /已存在于源码中/);
 });
