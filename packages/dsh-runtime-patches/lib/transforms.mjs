@@ -5,10 +5,12 @@ import {
 import {
   patchAccountUsageSettingsSource as patchAccountUsageSettingsFrontendSource,
   patchActivityTrackFrontendSource,
+  patchAppearanceThemeSource,
   patchContextStatusCardSource,
   patchEditResendShellSource,
   patchSelectionAnnotationSource,
   patchTurnProcessCollapseSource,
+  patchWorkspaceShellSource,
   patchWorkspaceConversationReferencesSource,
 } from "./transforms-frontend.mjs";
 import { patchToolDiffCardSource } from "./transforms-frontend-tool.mjs";
@@ -2189,17 +2191,23 @@ export function patchConversationActivityPresentationSource(source) {
 }
 
 export function patchConversationUiSource(source) {
-  return patchEditResendShellSource(
-    patchTurnProcessCollapseSource(
-      patchContextStatusCardSource(
-        patchSelectionAnnotationSource(
-          patchActivityTrackFrontendSource(
-            patchConversationActivityPresentationSource(patchContextMeterThresholdsSource(source)),
+  return patchWorkspaceShellSource(
+    patchEditResendShellSource(
+      patchTurnProcessCollapseSource(
+        patchContextStatusCardSource(
+          patchSelectionAnnotationSource(
+            patchActivityTrackFrontendSource(
+              patchConversationActivityPresentationSource(patchContextMeterThresholdsSource(source)),
+            ),
           ),
         ),
       ),
     ),
   );
+}
+
+export function patchThemeUiSource(source) {
+  return patchAppearanceThemeSource(source);
 }
 
 export function patchClientRuntimeSource(source) {

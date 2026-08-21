@@ -26,6 +26,7 @@ import {
   patchSystemPromptSource,
   patchTimeContextSource,
   patchToolActivityPresentationSource,
+  patchThemeUiSource,
   patchWindsurfSettingsSource,
   patchWorkspaceConversationReferencesSource,
 } from "../packages/dsh-runtime-patches/lib/transforms.mjs";
@@ -274,6 +275,7 @@ async function buildCandidate({ source, output }) {
   const settingsModelsUiPath = join(staging, "node_modules", "@deepseek-ai", "dsh-client-ui-settings-models", "lib", "client.js");
   const modelSelectionUiPath = join(staging, "node_modules", "@deepseek-ai", "dsh-client-ui-model-selection", "lib", "client.js");
   const conversationUiPath = join(staging, "node_modules", "@deepseek-ai", "dsh-client-ui-conversation", "lib", "client.js");
+  const themeUiPath = join(staging, "node_modules", "@deepseek-ai", "dsh-client-ui-theme", "lib", "client.js");
   const clientRuntimePath = join(staging, "node_modules", "@deepseek-ai", "dsh-client-runtime", "lib", "client.js");
   const workspaceUiPath = join(staging, "node_modules", "@deepseek-ai", "dsh-client-ui-workspace", "lib", "client.js");
   const toolUiPath = join(staging, "node_modules", "@deepseek-ai", "dsh-client-ui-tool", "lib", "client.js");
@@ -347,6 +349,7 @@ async function buildCandidate({ source, output }) {
     assertDirectory(dirname(settingsModelsUiPath), "模型设置界面"),
     assertDirectory(dirname(modelSelectionUiPath), "模型选择界面"),
     assertDirectory(dirname(conversationUiPath), "对话上下文状态面板"),
+    assertDirectory(dirname(themeUiPath), "主题外观界面"),
     assertDirectory(dirname(clientRuntimePath), "客户端会话运行时"),
     assertDirectory(dirname(toolUiPath), "工具调用界面"),
     assertDirectory(dirname(jobsToolPath), "Jobs 完成投递工具"),
@@ -393,6 +396,7 @@ async function buildCandidate({ source, output }) {
   ));
   changedFiles.push(await rewriteFile(modelSelectionUiPath, patchModelSelectionUxSource));
   changedFiles.push(await rewriteFile(conversationUiPath, patchConversationUiSource));
+  changedFiles.push(await rewriteFile(themeUiPath, patchThemeUiSource));
   changedFiles.push(await rewriteFile(clientRuntimePath, patchClientRuntimeSource));
   changedFiles.push(await rewriteFile(workspaceUiPath, patchWorkspaceConversationReferencesSource));
   changedFiles.push(await rewriteFile(toolUiPath, patchToolActivityPresentationSource));

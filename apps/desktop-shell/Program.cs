@@ -1,5 +1,7 @@
 using System.Diagnostics;
 using System.Drawing;
+using System.Runtime.InteropServices;
+using System.Text.Json;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.WinForms;
 
@@ -64,13 +66,36 @@ internal static class Program
 
 internal sealed class HarnessWindow : Form
 {
+    private const int DesktopTitlebarHeight = 36;
+    private const int ResizeGripSize = 8;
+    private const int WmNcLeftButtonDown = 0x00A1;
+    private const int WmNcHitTest = 0x0084;
+    private const int HtClient = 1;
+    private const int HtCaption = 2;
+    private const int HtLeft = 10;
+    private const int HtRight = 11;
+    private const int HtTop = 12;
+    private const int HtTopLeft = 13;
+    private const int HtTopRight = 14;
+    private const int HtBottom = 15;
+    private const int HtBottomLeft = 16;
+    private const int HtBottomRight = 17;
     private static readonly Uri HarnessUri = ResolveHarnessUri();
     private readonly WebView2 webView;
+    private readonly WebView2 embeddedBrowser;
     private readonly Panel loadingPanel;
     private readonly Label statusLabel;
     private readonly Button retryButton;
     private readonly HttpClient httpClient = new() { Timeout = TimeSpan.FromSeconds(3) };
+    private readonly bool customTitlebarEnabled = IsCustomTitlebarEnabled();
+    private CoreWebView2Environment? webViewEnvironment;
     private bool startupRunning;
+
+    [DllImport("user32.dll")]
+    private static extern bool ReleaseCapture();
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr SendMessage(IntPtr hWnd, int message, IntPtr wParam, IntPtr lParam);
 
     public HarnessWindow()
     {
@@ -80,11 +105,21 @@ internal sealed class HarnessWindow : Form
         MinimumSize = new Size(1024, 700);
         BackColor = Color.FromArgb(20, 20, 22);
         Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
+        if (customTitlebarEnabled)
+        {
+            FormBorderStyle = FormBorderStyle.None;
+        }
 
         webView = new WebView2
         {
             Dock = DockStyle.Fill,
             DefaultBackgroundColor = Color.FromArgb(20, 20, 22)
+        };
+
+        embeddedBrowser = new WebView2
+        {
+            Visible = false,
+            DefaultBackgroundColor = Color.White
         };
 
         statusLabel = new Label
@@ -140,11 +175,17 @@ internal sealed class HarnessWindow : Form
         loadingPanel.Controls.Add(loadingLayout);
 
         Controls.Add(webView);
+        Controls.Add(embeddedBrowser);
         Controls.Add(loadingPanel);
         loadingPanel.BringToFront();
 
         Shown += async (_, _) => await StartAsync();
         FormClosed += (_, _) => httpClient.Dispose();
+        Resize += async (_, _) =>
+        {
+            UpdateMaximizedBounds();
+            await PublishDesktopBridgeAsync();
+        };
     }
 
     public void RestoreAndActivate()
@@ -187,6 +228,7 @@ internal sealed class HarnessWindow : Form
             await WaitUntilReadyAsync();
             await InitializeWebViewAsync();
             webView.CoreWebView2.Navigate(HarnessUri.AbsoluteUri);
+            _ = HideLoadingWhenDocumentReadyAsync(webView.CoreWebView2);
         }
         catch (Exception exception)
         {
@@ -268,7 +310,7 @@ internal sealed class HarnessWindow : Form
 
     private async Task InitializeWebViewAsync()
     {
-        if (webView.CoreWebView2 is not null)
+        if (webView.CoreWebView2 is not null && embeddedBrowser.CoreWebView2 is not null)
         {
             return;
         }
@@ -296,24 +338,26 @@ internal sealed class HarnessWindow : Form
             options = new CoreWebView2EnvironmentOptions($"--remote-debugging-port={debugPort}");
         }
 
-        var environment = await CoreWebView2Environment.CreateAsync(
+        webViewEnvironment ??= await CoreWebView2Environment.CreateAsync(
             userDataFolder: userDataFolder,
             options: options);
-        await webView.EnsureCoreWebView2Async(environment);
+        await webView.EnsureCoreWebView2Async(webViewEnvironment);
 
         var core = webView.CoreWebView2
             ?? throw new InvalidOperationException("WebView2 初始化未完成");
+        await core.AddScriptToExecuteOnDocumentCreatedAsync(BuildDesktopBridgeScript());
+        core.WebMessageReceived += OnMainWebMessageReceived;
         core.Settings.AreDefaultContextMenusEnabled = false;
         core.Settings.AreDevToolsEnabled = false;
         core.Settings.IsStatusBarEnabled = false;
         core.Settings.IsZoomControlEnabled = true;
         core.DocumentTitleChanged += (_, _) => Text = "DeepSeek Harness";
+        core.DOMContentLoaded += (_, _) => BeginInvoke(ShowContent);
         core.NavigationCompleted += (_, args) =>
         {
             if (args.IsSuccess)
             {
-                loadingPanel.Visible = false;
-                webView.Focus();
+                ShowContent();
                 return;
             }
 
@@ -327,6 +371,427 @@ internal sealed class HarnessWindow : Form
             args.Handled = true;
             Process.Start(new ProcessStartInfo(args.Uri) { UseShellExecute = true });
         };
+
+        await embeddedBrowser.EnsureCoreWebView2Async(webViewEnvironment);
+        var embeddedCore = embeddedBrowser.CoreWebView2
+            ?? throw new InvalidOperationException("内置浏览器 WebView2 初始化未完成");
+        await embeddedCore.AddScriptToExecuteOnDocumentCreatedAsync(EmbeddedBrowserObserverScript);
+        embeddedCore.WebMessageReceived += OnEmbeddedBrowserWebMessageReceived;
+        embeddedCore.Settings.AreDefaultContextMenusEnabled = true;
+        embeddedCore.Settings.AreDevToolsEnabled = false;
+        embeddedCore.Settings.IsStatusBarEnabled = false;
+        embeddedCore.Settings.IsZoomControlEnabled = true;
+        embeddedCore.NewWindowRequested += (_, args) =>
+        {
+            args.Handled = true;
+            embeddedCore.Navigate(args.Uri);
+        };
+        embeddedCore.Navigate("about:blank");
+    }
+
+    private async Task HideLoadingWhenDocumentReadyAsync(CoreWebView2? core)
+    {
+        if (core is null)
+        {
+            return;
+        }
+
+        for (var attempt = 0; attempt < 40; attempt++)
+        {
+            try
+            {
+                var state = await core.ExecuteScriptAsync("document.readyState");
+                if (state.Contains("interactive", StringComparison.OrdinalIgnoreCase)
+                    || state.Contains("complete", StringComparison.OrdinalIgnoreCase))
+                {
+                    BeginInvoke(ShowContent);
+                    return;
+                }
+            }
+            catch (InvalidOperationException)
+            {
+            }
+            catch (COMException)
+            {
+            }
+
+            await Task.Delay(250);
+        }
+    }
+
+    private void ShowContent()
+    {
+        if (IsDisposed)
+        {
+            return;
+        }
+
+        loadingPanel.Visible = false;
+        loadingPanel.SendToBack();
+        webView.BringToFront();
+        if (embeddedBrowser.Visible)
+        {
+            embeddedBrowser.BringToFront();
+        }
+
+        webView.Focus();
+    }
+
+    private void OnMainWebMessageReceived(object? sender, CoreWebView2WebMessageReceivedEventArgs args)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(args.WebMessageAsJson);
+            var root = document.RootElement;
+            if (root.ValueKind != JsonValueKind.Object || !TryGetString(root, "type", out var type))
+            {
+                return;
+            }
+
+            switch (type)
+            {
+                case "dsh.desktop.command":
+                    if (TryGetString(root, "command", out var command))
+                    {
+                        HandleDesktopCommand(command);
+                    }
+                    break;
+                case "dsh.embeddedBrowser.setBounds":
+                    HandleEmbeddedBrowserBounds(root);
+                    break;
+            }
+        }
+        catch (JsonException)
+        {
+        }
+        catch (InvalidOperationException)
+        {
+        }
+    }
+
+    private async void OnEmbeddedBrowserWebMessageReceived(object? sender, CoreWebView2WebMessageReceivedEventArgs args)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(args.WebMessageAsJson);
+            var root = document.RootElement;
+            if (root.ValueKind != JsonValueKind.Object || !TryGetString(root, "type", out var type))
+            {
+                return;
+            }
+
+            if (!string.Equals(type, "dsh.embeddedBrowser.console-errors", StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            var detail = root.Clone();
+            await DispatchMainWindowEventAsync("dsh:browser:console-errors", detail.GetRawText());
+        }
+        catch (JsonException)
+        {
+        }
+        catch (InvalidOperationException)
+        {
+        }
+    }
+
+    private void HandleDesktopCommand(string command)
+    {
+        switch (command)
+        {
+            case "minimize":
+                WindowState = FormWindowState.Minimized;
+                break;
+            case "maximize":
+                UpdateMaximizedBounds();
+                WindowState = FormWindowState.Maximized;
+                _ = PublishDesktopBridgeAsync();
+                break;
+            case "restore":
+                WindowState = FormWindowState.Normal;
+                _ = PublishDesktopBridgeAsync();
+                break;
+            case "close":
+                Close();
+                break;
+            case "startDrag":
+                StartWindowDrag();
+                break;
+        }
+    }
+
+    private void StartWindowDrag()
+    {
+        if (!customTitlebarEnabled || WindowState == FormWindowState.Minimized)
+        {
+            return;
+        }
+
+        ReleaseCapture();
+        SendMessage(Handle, WmNcLeftButtonDown, HtCaption, IntPtr.Zero);
+    }
+
+    private void HandleEmbeddedBrowserBounds(JsonElement root)
+    {
+        if (!TryGetBoolean(root, "visible", out var visible)
+            || !visible
+            || !root.TryGetProperty("rect", out var rect)
+            || rect.ValueKind != JsonValueKind.Object)
+        {
+            embeddedBrowser.Visible = false;
+            return;
+        }
+
+        var requested = new Rectangle(
+            GetInt32(rect, "left"),
+            GetInt32(rect, "top"),
+            Math.Max(0, GetInt32(rect, "width")),
+            Math.Max(0, GetInt32(rect, "height")));
+        var clipped = Rectangle.Intersect(ClientRectangle, requested);
+        if (clipped.Width <= 0 || clipped.Height <= 0)
+        {
+            embeddedBrowser.Visible = false;
+            return;
+        }
+
+        embeddedBrowser.Bounds = clipped;
+        embeddedBrowser.Visible = true;
+        embeddedBrowser.BringToFront();
+        if (loadingPanel.Visible)
+        {
+            loadingPanel.BringToFront();
+        }
+    }
+
+    private async Task PublishDesktopBridgeAsync()
+    {
+        var core = webView.CoreWebView2;
+        if (core is null)
+        {
+            return;
+        }
+
+        try
+        {
+            await core.ExecuteScriptAsync(BuildDesktopBridgeScript());
+        }
+        catch (InvalidOperationException)
+        {
+        }
+    }
+
+    private async Task DispatchMainWindowEventAsync(string eventName, string detailJson)
+    {
+        var core = webView.CoreWebView2;
+        if (core is null)
+        {
+            return;
+        }
+
+        var eventNameJson = JsonSerializer.Serialize(eventName);
+        await core.ExecuteScriptAsync(
+            $"window.dispatchEvent(new CustomEvent({eventNameJson}, {{ detail: {detailJson} }}));");
+    }
+
+    private string BuildDesktopBridgeScript()
+    {
+        var bridgeJson = JsonSerializer.Serialize(new
+        {
+            platform = "win32",
+            titlebarMode = customTitlebarEnabled ? "custom" : "native-panel",
+            titlebarHeight = DesktopTitlebarHeight,
+            capabilities = new
+            {
+                customTitlebar = customTitlebarEnabled,
+                rightWorkspace = true,
+                embeddedBrowser = true
+            }
+        });
+        return $$"""
+            (() => {
+                const bridge = {{bridgeJson}};
+                try {
+                    Object.defineProperty(window, "__dshDesktop", {
+                        value: bridge,
+                        writable: true,
+                        configurable: true
+                    });
+                } catch {
+                    window.__dshDesktop = bridge;
+                }
+                window.dispatchEvent(new CustomEvent("dsh:desktop:ready", { detail: bridge }));
+            })();
+            """;
+    }
+
+    private static readonly string EmbeddedBrowserObserverScript = $$"""
+        (() => {
+            if (window.__dshEmbeddedBrowserObserverInstalled === true) return;
+            window.__dshEmbeddedBrowserObserverInstalled = true;
+            const serializeValue = (value) => {
+                try {
+                    if (value instanceof Error) return value.stack || value.message || String(value);
+                    if (typeof value === "string") return value;
+                    return JSON.stringify(value);
+                } catch {
+                    return String(value);
+                }
+            };
+            const postEntries = (entries) => {
+                try {
+                    window.chrome?.webview?.postMessage?.({
+                        type: "dsh.embeddedBrowser.console-errors",
+                        source: "embedded-browser",
+                        url: String(location.href || ""),
+                        reset: false,
+                        entries
+                    });
+                } catch {
+                }
+            };
+            const makeEntry = (message, extra) => Object.assign({
+                message: String(message || "").slice(0, 2000),
+                source: "console.error",
+                time: new Date().toISOString()
+            }, extra || {});
+            const originalError = console.error;
+            console.error = function(...args) {
+                postEntries([makeEntry(args.map(serializeValue).join(" "))]);
+                return originalError.apply(this, args);
+            };
+            window.addEventListener("error", (event) => {
+                postEntries([makeEntry(event.message, {
+                    source: event.filename || "window.error",
+                    line: Number.isFinite(event.lineno) ? event.lineno : undefined,
+                    column: Number.isFinite(event.colno) ? event.colno : undefined,
+                    stack: event.error?.stack
+                })]);
+            });
+            window.addEventListener("unhandledrejection", (event) => {
+                postEntries([makeEntry(serializeValue(event.reason), {
+                    source: "unhandledrejection",
+                    stack: event.reason?.stack
+                })]);
+            });
+        })();
+        """;
+
+    protected override void OnHandleCreated(EventArgs e)
+    {
+        base.OnHandleCreated(e);
+        UpdateMaximizedBounds();
+    }
+
+    protected override void OnLocationChanged(EventArgs e)
+    {
+        base.OnLocationChanged(e);
+        UpdateMaximizedBounds();
+    }
+
+    protected override void WndProc(ref Message message)
+    {
+        if (customTitlebarEnabled && message.Msg == WmNcHitTest && WindowState != FormWindowState.Maximized)
+        {
+            base.WndProc(ref message);
+            if ((int)message.Result != HtClient)
+            {
+                return;
+            }
+
+            var cursor = PointToClient(new Point(SignedLowWord(message.LParam), SignedHighWord(message.LParam)));
+            var left = cursor.X <= ResizeGripSize;
+            var right = cursor.X >= ClientSize.Width - ResizeGripSize;
+            var top = cursor.Y <= ResizeGripSize;
+            var bottom = cursor.Y >= ClientSize.Height - ResizeGripSize;
+            message.Result = (IntPtr)(left && top ? HtTopLeft
+                : right && top ? HtTopRight
+                : left && bottom ? HtBottomLeft
+                : right && bottom ? HtBottomRight
+                : left ? HtLeft
+                : right ? HtRight
+                : top ? HtTop
+                : bottom ? HtBottom
+                : HtClient);
+            return;
+        }
+
+        base.WndProc(ref message);
+    }
+
+    private void UpdateMaximizedBounds()
+    {
+        if (!customTitlebarEnabled || !IsHandleCreated)
+        {
+            return;
+        }
+
+        MaximizedBounds = Screen.FromHandle(Handle).WorkingArea;
+    }
+
+    private static bool TryGetString(JsonElement root, string propertyName, out string value)
+    {
+        if (root.TryGetProperty(propertyName, out var property) && property.ValueKind == JsonValueKind.String)
+        {
+            value = property.GetString() ?? "";
+            return value.Length > 0;
+        }
+
+        value = "";
+        return false;
+    }
+
+    private static bool TryGetBoolean(JsonElement root, string propertyName, out bool value)
+    {
+        if (root.TryGetProperty(propertyName, out var property)
+            && (property.ValueKind == JsonValueKind.True || property.ValueKind == JsonValueKind.False))
+        {
+            value = property.GetBoolean();
+            return true;
+        }
+
+        value = false;
+        return false;
+    }
+
+    private static int GetInt32(JsonElement root, string propertyName)
+    {
+        if (root.TryGetProperty(propertyName, out var property)
+            && property.ValueKind == JsonValueKind.Number
+            && property.TryGetInt32(out var value))
+        {
+            return value;
+        }
+
+        return 0;
+    }
+
+    private static int SignedLowWord(IntPtr value)
+    {
+        return unchecked((short)((long)value & 0xffff));
+    }
+
+    private static int SignedHighWord(IntPtr value)
+    {
+        return unchecked((short)(((long)value >> 16) & 0xffff));
+    }
+
+    private static bool IsCustomTitlebarEnabled()
+    {
+        var mode = Environment.GetEnvironmentVariable("DSH_DESKTOP_TITLEBAR_MODE");
+        if (string.Equals(mode, "custom", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        if (string.Equals(mode, "native-panel", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        var enabled = Environment.GetEnvironmentVariable("DSH_DESKTOP_CUSTOM_TITLEBAR");
+        return string.Equals(enabled, "1", StringComparison.Ordinal)
+            || string.Equals(enabled, "true", StringComparison.OrdinalIgnoreCase);
     }
 
     private static Uri ResolveHarnessUri()

@@ -1522,3 +1522,24 @@ export {
   turnCollapseController,
   turnProcessClock,
 } from "./frontend/turn-process-collapse.mjs";
+
+/* ==================== Plan 15：磨砂外观 / 右侧工作区外壳 ==================== */
+
+export {
+  DSH_AP_COPY,
+  DSH_AP_DEFAULTS,
+  DSH_AP_LIMITS,
+  DSH_APPEARANCE_MARKER,
+  DSH_APPEARANCE_RUNTIME_SOURCE,
+  DSH_APPEARANCE_STYLE,
+  patchAppearanceThemeSource,
+} from "./frontend/appearance-shell.mjs";
+
+export {
+  DSH_BROWSER_CONSOLE_ERRORS_EVENT,
+  DSH_EMBEDDED_BROWSER_BOUNDS_EVENT,
+  DSH_EMBEDDED_BROWSER_MESSAGE_TYPE,
+  DSH_WORKSPACE_LOCAL_KEY,
+  DSH_WORKSPACE_SHELL_STYLE,
+  patchWorkspaceShellSource,
+} from "./frontend/workspace-panel.mjs";
