@@ -33,6 +33,7 @@ import {
   dshGuessFileLanguage,
   dshIsBinaryFilePath,
   dshIsMarkdownPath,
+  dshLineRangeFromPreviewSelection,
   dshLineNumberFromDomNode,
   dshLineRangeFromTextOffsets,
   dshLinesToText,
@@ -111,11 +112,14 @@ test("部分能力可用时只点亮对应位，其余仍写明原因", () => {
   assert.match(caps.watch.reason, /变更/);
 });
 
-test("本轮 write 是硬关闭：适配器给了 writeFile 也不放行", () => {
-  assert.equal(DSH_FILE_WRITE_ENABLED, false);
+test("write 只在真实 writeFile 适配器存在时放行", () => {
+  assert.equal(DSH_FILE_WRITE_ENABLED, true);
   const caps = dshResolveFileCapabilities({ listDirectory: () => [], readFile: () => ({}), writeFile: () => true });
-  assert.equal(caps.write.enabled, false);
-  assert.match(caps.write.reason, /不接文件写入/);
+  assert.equal(caps.write.enabled, true);
+  assert.equal(caps.write.reason, "");
+  const missingWrite = dshResolveFileCapabilities({ listDirectory: () => [], readFile: () => ({}) });
+  assert.equal(missingWrite.write.enabled, false);
+  assert.match(missingWrite.write.reason, /写入/);
 });
 
 /* ==================== 目录归一化 ==================== */
@@ -188,6 +192,18 @@ test("纯 text 形状按请求起点编号，末尾换行不算一行", () => {
   assert.equal(read.totalLinesKnown, true);
   assert.equal(read.nextStartLine, null);
   assert.equal(dshLinesToText(read.lines), "a\nb\nc");
+});
+
+test("Markdown 预览选区能从可见文本反推源码行号", () => {
+  const lines = [
+    { number: 6, text: "## 君は言った" },
+    { number: 7, text: "結果也很清楚：系统内存 81% 压力 green，`10-discussion.md` 和 `40-tool-routing.md`" },
+    { number: 8, text: "- 这就是主人想要的效果吧" },
+  ];
+  assert.deepEqual(dshLineRangeFromPreviewSelection(lines, "君は言った"), { startLine: 6, endLine: 6 });
+  assert.deepEqual(dshLineRangeFromPreviewSelection(lines, "10-discussion.md"), { startLine: 7, endLine: 7 });
+  assert.deepEqual(dshLineRangeFromPreviewSelection(lines, "这就是主人想要的效果吧"), { startLine: 8, endLine: 8 });
+  assert.equal(dshLineRangeFromPreviewSelection(lines, "不存在的文字"), null);
 });
 
 test("总行数未知时不补零、不假装读完：标记 totalLinesKnown=false", () => {
@@ -524,6 +540,13 @@ test("watch 缺失是能力缺口不是错误：不进红色警告，改走底�
   /* 改为并进文件信息行，并用 title 给出完整原因。 */
   assert.ok(DSH_FILE_VIEWER_RUNTIME_SOURCE.includes("footParts.push(DSH_FILE_VIEWER_COPY.staleHint)"));
   assert.ok(DSH_FILE_VIEWER_RUNTIME_SOURCE.includes("DSH_FILE_VIEWER_COPY.staleHintTitle"));
+});
+
+test("运行时包含 Markdown 预览选区定位与 rootPath 变化重探测", () => {
+  assert.ok(DSH_FILE_VIEWER_RUNTIME_SOURCE.includes("dshLineRangeFromPreviewSelection"));
+  assert.ok(DSH_FILE_VIEWER_RUNTIME_SOURCE.includes('state.mode === "preview"'));
+  assert.ok(DSH_FILE_VIEWER_RUNTIME_SOURCE.includes("const beforeRoot = state.rootPath;"));
+  assert.ok(DSH_FILE_VIEWER_RUNTIME_SOURCE.includes("nextRoot !== beforeRoot"));
 });
 
 test("降级渲染的行高与行号槽宽度与官方 ReadBlock 的真实 CSS 对齐", { skip: !baselineAvailable }, () => {

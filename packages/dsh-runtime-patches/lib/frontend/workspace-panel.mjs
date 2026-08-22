@@ -4,7 +4,7 @@
  * 规范依据 `plans_windsurf/frontend-spec.md` 的 P15-5 / P15-6 / P15-6.1 / P15-7 /
  * P15-9 / P15-9.1 / P15-10 / P15-11.2，以及 `ANSWERS_Plan15_R3.md` 的 Q73-Q75。
  *
- * 本模块只做展示层外壳，**不接任何真实后端**：
+ * 本模块只做工作区外壳与桥接层：真实文件、终端和内置浏览器由桌面壳注入的 C# bridge 接管。
  *
  * - 工作区根节点是 `document.body` 下的 `#dsh-workspace-shell`，状态走
  *   `body[data-dsh-workspace-open]` 与 `--dsh-workspace-width`，不挂 obfuscated class，
@@ -13,10 +13,9 @@
  *   或 `native-panel` 时**完全不渲染 DOM 标题栏、也不给页面顶部加 padding**，
  *   避免原生栏 + 网页空白栏双层占位。窗口命令一律 postMessage 给 C#，
  *   前端不假实现拖动/最小化/最大化/关闭。
- * - 内置浏览器**不用 iframe 加载任意网页**：只画 toolbar、空态与一块不绘制真实
- *   网页内容的预留矩形，并按 P15-9.1 发 `dsh.embeddedBrowser.setBounds`
- *   （同时派发 `dsh:embedded-browser:set-bounds` DOM 事件供普通浏览器 mock 观察）。
- * - 终端与文件本轮无后端，做占位与禁用说明，不启动 shell、不伪造输出。
+ * - 内置浏览器不用 iframe：前端只负责 toolbar 与预留矩形，导航、真实 DOM、console 和元素拾取都走
+ *   C# 第二个 WebView2。
+ * - 终端与文件必须由桌面壳能力位显式开启；没有 bridge 时继续显示禁用说明，不造假数据。
  * - 元素/控制台回传只**接收** `dsh:browser:element-picked`，自己不拾取；composer
  *   事件按 kind 拆开派发，不写 textarea，也不复用 `dsh:composer:add-text`。
  *
@@ -26,8 +25,12 @@
 
 import { assertNotAlreadyPatched, replaceExactlyOnce } from "./replace-exactly.mjs";
 
-/** 立即生效的本地 UI 状态 key（R3 Q73）。图片草稿与外观草稿在 `.draft`，本模块不碰。 */
-export const DSH_WORKSPACE_LOCAL_KEY = "dsh.appearance.v1.local";
+/** 立即生效的右侧工作区 UI 状态 key（R3 Q73）。与官方左侧会话列表、外观草稿彻底隔离。 */
+export const DSH_WORKSPACE_LOCAL_KEY = "dsh.rightWorkspace.view.v1";
+/** Plan_15 早期候选误用过的官方工作区 key；只读迁移并在下次写入时清理 workspace 片段。 */
+export const DSH_WORKSPACE_LEGACY_LOCAL_KEY = "dsh.workspace.view.v5";
+/** Plan_15 早期候选误用过的外观 key；只读迁移并在下次写入时清理 workspace 片段。 */
+export const DSH_WORKSPACE_APPEARANCE_LEGACY_LOCAL_KEY = "dsh.appearance.v1.local";
 
 export const DSH_WORKSPACE_DEFAULT_WIDTH = 440;
 export const DSH_WORKSPACE_MIN_WIDTH = 360;
@@ -46,7 +49,13 @@ export const DSH_TITLEBAR_DEFAULT_HEIGHT = 36;
 export const DSH_DESKTOP_COMMAND_TYPE = "dsh.desktop.command";
 
 export const DSH_EMBEDDED_BROWSER_MESSAGE_TYPE = "dsh.embeddedBrowser.setBounds";
+export const DSH_EMBEDDED_BROWSER_NAVIGATE_TYPE = "dsh.embeddedBrowser.navigate";
+export const DSH_EMBEDDED_BROWSER_HISTORY_TYPE = "dsh.embeddedBrowser.history";
+export const DSH_EMBEDDED_BROWSER_PICK_TYPE = "dsh.embeddedBrowser.pickElement";
 export const DSH_EMBEDDED_BROWSER_BOUNDS_EVENT = "dsh:embedded-browser:set-bounds";
+export const DSH_BROWSER_STATE_EVENT = "dsh:browser:state";
+export const DSH_TERMINAL_RUN_TYPE = "dsh.terminal.run";
+export const DSH_TERMINAL_RESPONSE_TYPE = "dsh.terminal.response";
 /** R3 Q74 冻结的四个 reason；其余触发源（含 toolbar 高度变化）归一到 `resize`。 */
 export const DSH_EMBEDDED_BROWSER_REASONS = ["resize", "tab-change", "workspace-toggle", "window-state"];
 
@@ -83,11 +92,12 @@ export const DSH_WORKSPACE_COPY = {
   tabTerminal: "终端",
   treeTitle: "文件树",
   treeEmptyTitle: "文件能力未连接",
-  treeEmptyBody: "后端还没有通用的文件读写 adapter，本轮只做外壳与空态。",
+  treeEmptyBody: "桌面壳会把真实工作区目录挂进这里，未连接时只显示空态。",
   filesEmptyTitle: "文件能力未连接",
-  filesEmptyBody: "等待 Codex 补 readFile / writeFile adapter 后再接入查看器（W4 负责查看器本体）。",
+  filesEmptyBody: "在桌面版里会列出真实工作区文件，支持预览、选区加入对话和受控编辑保存。",
   browserUrlLabel: "地址",
   browserUrlPlaceholder: "内置浏览器未连接",
+  browserUrlReadyPlaceholder: "输入 URL",
   browserBack: "后退",
   browserForward: "前进",
   browserReload: "刷新",
@@ -95,15 +105,22 @@ export const DSH_WORKSPACE_COPY = {
   browserStageTitle: "内置浏览器能力未连接",
   browserStageBody: "这块区域是给 C# 第二个 WebView2 预留的位置，前端不加载真实网页。",
   browserStageNote: "前端已按坐标契约上报矩形；真实画面由桌面壳覆盖绘制。",
+  browserPickElement: "选择元素",
+  browserPickedReady: "已选中元素，可加入对话",
   browserSendElement: "发送元素",
   browserConsoleErrors: "控制台错误",
-  terminalTitle: "终端能力等待 Codex 后端接入",
-  terminalBody: "前端不启动 shell，也不伪造输出。",
+  terminalTitle: "工作区终端",
+  terminalBody: "在当前 DSH 工作区内执行短命令，输出会限制长度并带退出码。",
+  terminalPlaceholder: "输入 PowerShell 命令，例如 Get-Location",
+  terminalRun: "运行",
+  terminalIdle: "还没有运行命令",
+  terminalRunning: "正在运行…",
+  terminalExit: "退出码",
   disabledNoDesktop: "当前没有桌面壳能力通道（缺 window.__dshDesktop）",
   disabledNoEmbeddedBrowser: "内置浏览器能力未开启（capabilities.embeddedBrowser 不为 true）",
   disabledNoComposerBridge: "composer 事件桥未就绪，暂不能回传",
-  disabledNoTerminal: "终端能力本轮无后端",
-  disabledNoFiles: "文件能力本轮无后端",
+  disabledNoTerminal: "桌面壳未开放真实终端能力",
+  disabledNoFiles: "桌面壳未开放真实文件能力",
   titlebarTitle: "DeepSeek Harness",
   titlebarMinimize: "最小化",
   titlebarMaximize: "最大化",
@@ -132,7 +149,7 @@ export function dshClampWorkspaceWidth(width, viewportWidth) {
 }
 
 /**
- * 读 `dsh.appearance.v1.local` 里的 workspace 片段。任何形状不符一律回落默认值，
+ * 读本地 workspace 片段。任何形状不符一律回落默认值，
  * 不猜测、不部分恢复。
  * @param raw - localStorage 原始字符串。
  */
@@ -156,24 +173,14 @@ export function dshReadWorkspaceLocalState(raw) {
 }
 
 /**
- * 合并写回 workspace 片段，**保留同一 key 下其它字段**（外观相关的 local 状态可能
- * 由 W1/W2 写入，不能被工作区覆盖掉）。
- * @param raw - localStorage 原始字符串（可为 null）。
+ * 写回 workspace 片段。workspace 使用独立 key，只保存右侧工作区自己的状态，
+ * 不把官方左栏、外观草稿或早期候选误塞进来的字段继续带下去。
+ * @param raw - 旧签名保留给调用方兼容，当前不再合并使用。
  * @param workspace - 当前 `{ open, activeTab, width }`。
  */
 export function dshWriteWorkspaceLocalState(raw, workspace) {
-  let base = {};
-  if (typeof raw === "string" && raw !== "") {
-    try {
-      const parsed = JSON.parse(raw);
-      if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)) base = parsed;
-    } catch {
-      base = {};
-    }
-  }
   const next = workspace === null || typeof workspace !== "object" ? {} : workspace;
   return JSON.stringify({
-    ...base,
     workspace: {
       open: next.open === true,
       activeTab: DSH_WORKSPACE_TABS.includes(next.activeTab) ? next.activeTab : "files",
@@ -206,7 +213,7 @@ export function dshResolveTitlebarPlan(desktop) {
 
 /**
  * 能力探测（P15-9）：先看 `capabilities`，缺能力直接 disabled 并给出原因，
- * 不靠调用失败才降级。终端与文件本轮恒为 false。
+ * 不靠调用失败才降级。
  * @param desktop - `window.__dshDesktop`。
  */
 export function dshResolveWorkspaceCapabilities(desktop) {
@@ -231,8 +238,14 @@ export function dshResolveWorkspaceCapabilities(desktop) {
       enabled: caps !== null && caps.customTitlebar === true,
       reason: bridge === null ? DSH_WORKSPACE_COPY.disabledNoDesktop : "capability",
     },
-    terminal: { enabled: false, reason: DSH_WORKSPACE_COPY.disabledNoTerminal },
-    files: { enabled: false, reason: DSH_WORKSPACE_COPY.disabledNoFiles },
+    terminal: {
+      enabled: caps !== null && caps.terminal === true,
+      reason: bridge === null ? DSH_WORKSPACE_COPY.disabledNoDesktop : caps !== null && caps.terminal === true ? "capability" : DSH_WORKSPACE_COPY.disabledNoTerminal,
+    },
+    files: {
+      enabled: caps !== null && caps.files === true,
+      reason: bridge === null ? DSH_WORKSPACE_COPY.disabledNoDesktop : caps !== null && caps.files === true ? "capability" : DSH_WORKSPACE_COPY.disabledNoFiles,
+    },
   };
 }
 
@@ -413,24 +426,38 @@ body[data-dsh-workspace-open="true"] #dsh-workspace-toggle{right:calc(var(--dsh-
 .dsh-ws-tree{flex:0 0 auto;width:var(--dsh-workspace-tree-width);min-width:0;overflow:auto;padding:8px;border-right:1px solid var(--dsh-workspace-border);font-size:12px;color:var(--dsh-workspace-muted)}
 .dsh-ws-tree-title{display:block;margin-bottom:6px;font-size:11px;letter-spacing:.04em;text-transform:uppercase;opacity:.8}
 #dsh-workspace-shell[data-dsh-compact-tree="true"] .dsh-ws-tree{display:none}
+#dsh-workspace-shell[data-dsh-workspace-tab="browser"] .dsh-ws-tree,#dsh-workspace-shell[data-dsh-workspace-tab="terminal"] .dsh-ws-tree{display:none}
 .dsh-ws-col{display:flex;flex-direction:column;flex:1;min-width:0}
 .dsh-ws-body{flex:1;display:flex;flex-direction:column;min-height:0;min-width:0}
 .dsh-ws-body[hidden]{display:none}
 .dsh-ws-empty{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;flex:1;padding:18px;text-align:center;color:var(--dsh-workspace-muted);font-size:12px}
+.dsh-ws-empty[hidden]{display:none}
 .dsh-ws-empty strong{color:var(--dsh-workspace-fg);font-size:13px;font-weight:600}
 .dsh-ws-empty code{font-family:"Cascadia Code",ui-monospace,monospace;font-size:11px}
 .dsh-browser-bar{display:flex;align-items:center;gap:4px;flex:0 0 auto;padding:6px 8px;border-bottom:1px solid var(--dsh-workspace-border)}
 .dsh-browser-nav{width:24px;height:24px;border:0;border-radius:6px;background:none;color:var(--dsh-workspace-muted);cursor:pointer}
 .dsh-browser-nav[disabled]{opacity:.4;cursor:not-allowed}
+.dsh-browser-go{width:auto;padding:0 8px;font-size:12px}
 .dsh-browser-url{flex:1;min-width:0;height:24px;padding:0 8px;border:1px solid var(--dsh-workspace-border);border-radius:6px;background:var(--dsh-glass-input-bg, transparent);color:var(--dsh-workspace-fg);font-size:12px}
 .dsh-browser-url[disabled]{opacity:.6;cursor:not-allowed}
 .dsh-browser-stage{position:relative;display:flex;flex-direction:column;flex:1;min-height:0;margin:8px;border:1px dashed var(--dsh-workspace-border);border-radius:8px;background:var(--dsh-workspace-stage-bg);overflow:hidden}
 .dsh-browser-stage[data-dsh-browser-reserved="true"]{background-image:repeating-linear-gradient(135deg,transparent 0 9px,var(--dsh-workspace-hover) 9px 10px)}
+.dsh-browser-stage[data-dsh-browser-reserved="false"]{border-style:solid;background:transparent}
+.dsh-browser-stage[data-dsh-browser-reserved="false"] .dsh-ws-empty{display:none}
 .dsh-devtoolbar{display:flex;align-items:center;justify-content:flex-end;gap:6px;flex:0 0 auto;padding:6px 8px;border-top:1px solid var(--dsh-workspace-border)}
 .dsh-devtoolbar button{display:inline-flex;align-items:center;gap:5px;height:24px;padding:0 9px;border:1px solid var(--dsh-workspace-border);border-radius:6px;background:none;color:var(--dsh-workspace-muted);font-size:12px;cursor:pointer}
 .dsh-devtoolbar button:hover:not([disabled]){background:var(--dsh-workspace-hover);color:var(--dsh-workspace-fg)}
 .dsh-devtoolbar button[disabled]{opacity:.45;cursor:not-allowed}
-#dsh-desktop-titlebar{position:fixed;top:0;left:0;right:0;z-index:60;display:flex;align-items:center;height:var(--dsh-desktop-titlebar-height);padding-left:12px;background:var(--dsh-desktop-titlebar-bg);color:var(--dsh-desktop-titlebar-fg);border-bottom:1px solid var(--dsh-workspace-border);-webkit-app-region:drag}
+.dsh-terminal-pane{display:flex;flex-direction:column;gap:8px;flex:1;min-height:0;padding:8px}
+.dsh-terminal-log{flex:1;min-height:0;overflow:auto;border:1px solid var(--dsh-workspace-border);border-radius:8px;background:var(--dsh-workspace-stage-bg);padding:10px;font:12px/1.55 "Cascadia Code",ui-monospace,monospace;white-space:pre-wrap;color:var(--dsh-workspace-fg)}
+.dsh-terminal-log[data-empty="true"]{display:flex;align-items:center;justify-content:center;color:var(--dsh-workspace-muted);font-family:inherit}
+.dsh-terminal-row{display:flex;align-items:center;gap:6px;flex:0 0 auto}
+.dsh-terminal-input{flex:1;min-width:0;height:28px;padding:0 9px;border:1px solid var(--dsh-workspace-border);border-radius:7px;background:var(--dsh-glass-input-bg, transparent);color:var(--dsh-workspace-fg);font:12px "Cascadia Code",ui-monospace,monospace}
+.dsh-terminal-input[disabled]{opacity:.6;cursor:not-allowed}
+.dsh-terminal-run{height:28px;padding:0 12px;border:1px solid var(--dsh-workspace-border);border-radius:7px;background:none;color:var(--dsh-workspace-fg);font-size:12px;cursor:pointer}
+.dsh-terminal-run:hover:not([disabled]){background:var(--dsh-workspace-hover)}
+.dsh-terminal-run[disabled]{opacity:.45;cursor:not-allowed}
+#dsh-desktop-titlebar{position:fixed;top:0;left:0;right:0;z-index:2147483000;display:flex;align-items:center;height:var(--dsh-desktop-titlebar-height);padding-left:12px;background:var(--dsh-desktop-titlebar-bg);color:var(--dsh-desktop-titlebar-fg);border-bottom:1px solid var(--dsh-workspace-border);-webkit-app-region:drag}
 .dsh-titlebar-title{flex:1;font-size:12px;pointer-events:none}
 .dsh-titlebar-btn{width:44px;height:var(--dsh-desktop-titlebar-height);border:0;background:none;color:inherit;font-size:12px;cursor:pointer;-webkit-app-region:no-drag}
 .dsh-titlebar-btn:hover{background:var(--dsh-workspace-hover)}
@@ -454,6 +481,8 @@ const WORKSPACE_LOGIC_SOURCE = [
 
 const WORKSPACE_CONSTANT_SOURCE = [
   ["DSH_WORKSPACE_LOCAL_KEY", DSH_WORKSPACE_LOCAL_KEY],
+  ["DSH_WORKSPACE_LEGACY_LOCAL_KEY", DSH_WORKSPACE_LEGACY_LOCAL_KEY],
+  ["DSH_WORKSPACE_APPEARANCE_LEGACY_LOCAL_KEY", DSH_WORKSPACE_APPEARANCE_LEGACY_LOCAL_KEY],
   ["DSH_WORKSPACE_DEFAULT_WIDTH", DSH_WORKSPACE_DEFAULT_WIDTH],
   ["DSH_WORKSPACE_MIN_WIDTH", DSH_WORKSPACE_MIN_WIDTH],
   ["DSH_WORKSPACE_MAX_WIDTH_PX", DSH_WORKSPACE_MAX_WIDTH_PX],
@@ -465,7 +494,13 @@ const WORKSPACE_CONSTANT_SOURCE = [
   ["DSH_TITLEBAR_DEFAULT_HEIGHT", DSH_TITLEBAR_DEFAULT_HEIGHT],
   ["DSH_DESKTOP_COMMAND_TYPE", DSH_DESKTOP_COMMAND_TYPE],
   ["DSH_EMBEDDED_BROWSER_MESSAGE_TYPE", DSH_EMBEDDED_BROWSER_MESSAGE_TYPE],
+  ["DSH_EMBEDDED_BROWSER_NAVIGATE_TYPE", DSH_EMBEDDED_BROWSER_NAVIGATE_TYPE],
+  ["DSH_EMBEDDED_BROWSER_HISTORY_TYPE", DSH_EMBEDDED_BROWSER_HISTORY_TYPE],
+  ["DSH_EMBEDDED_BROWSER_PICK_TYPE", DSH_EMBEDDED_BROWSER_PICK_TYPE],
   ["DSH_EMBEDDED_BROWSER_BOUNDS_EVENT", DSH_EMBEDDED_BROWSER_BOUNDS_EVENT],
+  ["DSH_BROWSER_STATE_EVENT", DSH_BROWSER_STATE_EVENT],
+  ["DSH_TERMINAL_RUN_TYPE", DSH_TERMINAL_RUN_TYPE],
+  ["DSH_TERMINAL_RESPONSE_TYPE", DSH_TERMINAL_RESPONSE_TYPE],
   ["DSH_EMBEDDED_BROWSER_REASONS", DSH_EMBEDDED_BROWSER_REASONS],
   ["DSH_COMPOSER_EVENTS", DSH_COMPOSER_EVENTS],
   ["DSH_BROWSER_ELEMENT_PICKED_EVENT", DSH_BROWSER_ELEMENT_PICKED_EVENT],
@@ -501,16 +536,69 @@ ${WORKSPACE_LOGIC_SOURCE}
 \t\t\tsvg.appendChild(node);
 \t\t\treturn svg;
 \t\t}
-\t\tfunction dshWorkspaceReadLocalRaw() {
+	\t\tfunction dshWorkspaceReadLocalRaw() {
+	\t\t\ttry {
+	\t\t\t\tconst current = window.localStorage?.getItem(DSH_WORKSPACE_LOCAL_KEY) ?? null;
+	\t\t\t\tif (current !== null && current !== "") return current;
+	\t\t\t\treturn window.localStorage?.getItem(DSH_WORKSPACE_LEGACY_LOCAL_KEY) ?? null;
+	\t\t\t} catch {
+	\t\t\t\treturn null;
+	\t\t\t}
+\t\t}
+\t\tfunction dshWorkspaceRawHasWorkspace(raw) {
+\t\t\tif (raw === null || raw === undefined || raw === "") return false;
 \t\t\ttry {
-\t\t\t\treturn window.localStorage?.getItem(DSH_WORKSPACE_LOCAL_KEY) ?? null;
+\t\t\t\tconst parsed = JSON.parse(String(raw));
+\t\t\t\treturn parsed !== null && typeof parsed === "object" && parsed.workspace !== null && typeof parsed.workspace === "object";
+\t\t\t} catch {
+\t\t\t\treturn false;
+\t\t\t}
+\t\t}
+\t\tfunction dshWorkspaceExtractRaw(raw) {
+\t\t\tif (!dshWorkspaceRawHasWorkspace(raw)) return null;
+\t\t\ttry {
+\t\t\t\tconst parsed = JSON.parse(String(raw));
+\t\t\t\treturn dshWriteWorkspaceLocalState(null, parsed.workspace);
 \t\t\t} catch {
 \t\t\t\treturn null;
 \t\t\t}
 \t\t}
+\t\tfunction dshWorkspaceReadLocalRaw() {
+\t\t\ttry {
+\t\t\t\tconst current = window.localStorage?.getItem(DSH_WORKSPACE_LOCAL_KEY) ?? null;
+\t\t\t\tconst normalizedCurrent = dshWorkspaceExtractRaw(current);
+\t\t\t\tif (normalizedCurrent !== null) return normalizedCurrent;
+\t\t\t\tfor (const key of [DSH_WORKSPACE_LEGACY_LOCAL_KEY, DSH_WORKSPACE_APPEARANCE_LEGACY_LOCAL_KEY]) {
+\t\t\t\t\tconst raw = window.localStorage?.getItem(key) ?? null;
+\t\t\t\t\tconst normalized = dshWorkspaceExtractRaw(raw);
+\t\t\t\t\tif (normalized !== null) return normalized;
+\t\t\t\t}
+\t\t\t\treturn null;
+\t\t\t} catch {
+\t\t\t\treturn null;
+\t\t\t}
+\t\t}
+\t\tfunction dshWorkspacePruneLegacyLocalRaw() {
+\t\t\tfor (const key of [DSH_WORKSPACE_LEGACY_LOCAL_KEY, DSH_WORKSPACE_APPEARANCE_LEGACY_LOCAL_KEY]) {
+\t\t\t\ttry {
+\t\t\t\t\tconst raw = window.localStorage?.getItem(key) ?? null;
+\t\t\t\t\tif (!dshWorkspaceRawHasWorkspace(raw)) continue;
+\t\t\t\t\tconst parsed = JSON.parse(String(raw));
+\t\t\t\t\tdelete parsed.workspace;
+\t\t\t\t\tif (Object.keys(parsed).length === 0) {
+\t\t\t\t\t\twindow.localStorage?.removeItem(key);
+\t\t\t\t\t} else {
+\t\t\t\t\t\twindow.localStorage?.setItem(key, JSON.stringify(parsed));
+\t\t\t\t\t}
+\t\t\t\t} catch {
+\t\t\t\t\t/* 旧候选污染清不掉也不能影响真实工作区。 */
+\t\t\t\t}
+\t\t\t}
+\t\t}
 \t\tfunction dshWorkspaceWriteLocalRaw(workspace) {
 \t\t\ttry {
-\t\t\t\twindow.localStorage?.setItem(DSH_WORKSPACE_LOCAL_KEY, dshWriteWorkspaceLocalState(dshWorkspaceReadLocalRaw(), workspace));
+\t\t\t\twindow.localStorage?.setItem(DSH_WORKSPACE_LOCAL_KEY, dshWriteWorkspaceLocalState(null, workspace));
+\t\t\t\tdshWorkspacePruneLegacyLocalRaw();
 \t\t\t} catch {
 \t\t\t\t/* 隐私模式或配额满：本地状态丢了不影响功能，不弹错。 */
 \t\t\t}
@@ -528,6 +616,12 @@ ${WORKSPACE_LOGIC_SOURCE}
 \t\t\tpost.call(window.chrome.webview, { type: DSH_DESKTOP_COMMAND_TYPE, command });
 \t\t\treturn true;
 \t\t}
+\t\tfunction dshWorkspacePostMessage(message) {
+\t\t\tconst post = window.chrome?.webview?.postMessage;
+\t\t\tif (typeof post !== "function") return false;
+\t\t\tpost.call(window.chrome.webview, message);
+\t\t\treturn true;
+\t\t}
 \t\t/**
 \t\t* 装载右侧工作区外壳、可隐藏的自绘标题栏与内置浏览器预留矩形。
 \t\t* 返回 teardown，交给 ctx.effect 托管。
@@ -543,8 +637,17 @@ ${WORKSPACE_LOGIC_SOURCE}
 \t\t\tlet titlebarPlan = dshResolveTitlebarPlan(window.__dshDesktop);
 \t\t\tconst pickedElements = [];
 \t\t\tconst consoleErrors = [];
+\t\t\tconst terminalRequests = new Map();
+\t\t\tlet browserState = { url: "", title: "", canGoBack: false, canGoForward: false, phase: "idle" };
+\t\t\tlet terminalSeq = 1;
 \t\t\tconst disposers = [];
-\t\t\tconst stored = dshReadWorkspaceLocalState(dshWorkspaceReadLocalRaw());
+\t\t\tconst storedRaw = dshWorkspaceReadLocalRaw();
+\t\t\tconst stored = dshReadWorkspaceLocalState(storedRaw);
+\t\t\tif (storedRaw !== null) {
+\t\t\t\tdshWorkspaceWriteLocalRaw(stored);
+\t\t\t} else {
+\t\t\t\tdshWorkspacePruneLegacyLocalRaw();
+\t\t\t}
 \t\t\tstate.userOpen = stored.open;
 \t\t\tstate.width = stored.width;
 \t\t\tstate.activeTab = stored.activeTab;
@@ -638,7 +741,26 @@ ${WORKSPACE_LOGIC_SOURCE}
 \t\t\t\treturn wrap;
 \t\t\t};
 \t\t\tpanes.get("files").appendChild(emptyBlock(DSH_WORKSPACE_COPY.filesEmptyTitle, [DSH_WORKSPACE_COPY.filesEmptyBody, capabilities.files.reason]));
-\t\t\tpanes.get("terminal").appendChild(emptyBlock(DSH_WORKSPACE_COPY.terminalTitle, [DSH_WORKSPACE_COPY.terminalBody, capabilities.terminal.reason]));
+\t\t\tconst terminalPane = panes.get("terminal");
+\t\t\tconst terminalWrap = doc.createElement("div");
+\t\t\tterminalWrap.className = "dsh-terminal-pane";
+\t\t\tconst terminalLog = doc.createElement("pre");
+\t\t\tterminalLog.className = "dsh-terminal-log";
+\t\t\tterminalLog.dataset.empty = "true";
+\t\t\tterminalLog.textContent = capabilities.terminal.enabled === true ? DSH_WORKSPACE_COPY.terminalIdle : capabilities.terminal.reason;
+\t\t\tconst terminalRow = doc.createElement("div");
+\t\t\tterminalRow.className = "dsh-terminal-row";
+\t\t\tconst terminalInput = doc.createElement("input");
+\t\t\tterminalInput.type = "text";
+\t\t\tterminalInput.className = "dsh-terminal-input";
+\t\t\tterminalInput.placeholder = DSH_WORKSPACE_COPY.terminalPlaceholder;
+\t\t\tconst terminalRun = doc.createElement("button");
+\t\t\tterminalRun.type = "button";
+\t\t\tterminalRun.className = "dsh-terminal-run";
+\t\t\tterminalRun.textContent = DSH_WORKSPACE_COPY.terminalRun;
+\t\t\tterminalRow.append(terminalInput, terminalRun);
+\t\t\tterminalWrap.append(terminalLog, terminalRow);
+\t\t\tterminalPane.appendChild(terminalWrap);
 
 \t\t\tconst browserPane = panes.get("browser");
 \t\t\tconst browserBar = doc.createElement("div");
@@ -660,6 +782,13 @@ ${WORKSPACE_LOGIC_SOURCE}
 \t\t\turlInput.setAttribute("aria-label", DSH_WORKSPACE_COPY.browserUrlLabel);
 \t\t\turlInput.placeholder = DSH_WORKSPACE_COPY.browserUrlPlaceholder;
 \t\t\tbrowserBar.appendChild(urlInput);
+\t\t\tconst browserGo = doc.createElement("button");
+\t\t\tbrowserGo.type = "button";
+\t\t\tbrowserGo.className = "dsh-browser-nav dsh-browser-go";
+\t\t\tbrowserGo.dataset.dshBrowserGo = "true";
+\t\t\tbrowserGo.textContent = DSH_WORKSPACE_COPY.browserGo;
+\t\t\tbrowserGo.setAttribute("aria-label", DSH_WORKSPACE_COPY.browserGo);
+\t\t\tbrowserBar.appendChild(browserGo);
 \t\t\tbrowserPane.appendChild(browserBar);
 
 \t\t\t/* 预留矩形：前端不画真实网页，只上报坐标，由 C# 第二个 WebView2 覆盖（P15-9.1）。 */
@@ -703,6 +832,16 @@ ${WORKSPACE_LOGIC_SOURCE}
 \t\t\tbody.appendChild(toggle);
 
 \t\t\tlet titlebar = null;
+\t\t\tconst syncTitlebarButtons = () => {
+\t\t\t\tif (titlebar === null) return;
+\t\t\t\tconst maximizeButton = titlebar.querySelector("[data-dsh-titlebar-role='toggle-maximize']");
+\t\t\t\tif (!(maximizeButton instanceof HTMLButtonElement)) return;
+\t\t\t\tconst bridge = window.__dshDesktop !== null && typeof window.__dshDesktop === "object" ? window.__dshDesktop : {};
+\t\t\t\tconst maximized = bridge.isMaximized === true || bridge.windowState === "maximized";
+\t\t\t\tmaximizeButton.dataset.dshTitlebarCommand = maximized ? "restore" : "maximize";
+\t\t\t\tmaximizeButton.setAttribute("aria-label", maximized ? "还原" : DSH_WORKSPACE_COPY.titlebarMaximize);
+\t\t\t\tmaximizeButton.textContent = maximized ? "\\u2750" : "\\u25A1";
+\t\t\t};
 \t\t\tconst renderTitlebar = () => {
 \t\t\t\tif (titlebarPlan.render !== true) {
 \t\t\t\t\t/* native-panel：不画标题栏、不加顶部 padding，避免双层占位。 */
@@ -714,7 +853,10 @@ ${WORKSPACE_LOGIC_SOURCE}
 \t\t\t\t}
 \t\t\t\thtml.dataset.dshDesktopTitlebar = "custom";
 \t\t\t\tbody.style.setProperty("--dsh-desktop-titlebar-height", titlebarPlan.height + "px");
-\t\t\t\tif (titlebar !== null) return;
+\t\t\t\tif (titlebar !== null) {
+\t\t\t\t\tsyncTitlebarButtons();
+\t\t\t\t\treturn;
+\t\t\t\t}
 \t\t\t\ttitlebar = doc.createElement("div");
 \t\t\t\ttitlebar.id = "dsh-desktop-titlebar";
 \t\t\t\tconst title = doc.createElement("span");
@@ -726,6 +868,7 @@ ${WORKSPACE_LOGIC_SOURCE}
 \t\t\t\t\tbutton.type = "button";
 \t\t\t\t\tbutton.className = "dsh-titlebar-btn";
 \t\t\t\t\tbutton.dataset.dshTitlebarCommand = spec[0];
+\t\t\t\t\tif (spec[0] === "maximize") button.dataset.dshTitlebarRole = "toggle-maximize";
 \t\t\t\t\tbutton.setAttribute("aria-label", spec[1]);
 \t\t\t\t\tbutton.textContent = spec[2];
 \t\t\t\t\ttitlebar.appendChild(button);
@@ -741,6 +884,7 @@ ${WORKSPACE_LOGIC_SOURCE}
 \t\t\t\t\tdshWorkspaceDesktopCommand("startDrag");
 \t\t\t\t});
 \t\t\t\tbody.appendChild(titlebar);
+\t\t\t\tsyncTitlebarButtons();
 \t\t\t};
 
 \t\t\tlet boundsFrame = 0;
@@ -770,29 +914,40 @@ ${WORKSPACE_LOGIC_SOURCE}
 \t\t\tconst syncToolbars = () => {
 \t\t\t\tconst browserEnabled = capabilities.embeddedBrowser.enabled === true;
 \t\t\t\tfor (const button of navButtons) {
-\t\t\t\t\tbutton.disabled = !browserEnabled;
+\t\t\t\t\tconst nav = button.dataset.dshBrowserNav;
+\t\t\t\t\tbutton.disabled = !browserEnabled
+\t\t\t\t\t\t|| (nav === "back" && browserState.canGoBack !== true)
+\t\t\t\t\t\t|| (nav === "forward" && browserState.canGoForward !== true);
 \t\t\t\t\tbutton.title = browserEnabled ? "" : capabilities.embeddedBrowser.reason;
 \t\t\t\t}
 \t\t\t\turlInput.disabled = !browserEnabled;
+\t\t\t\turlInput.placeholder = browserEnabled ? DSH_WORKSPACE_COPY.browserUrlReadyPlaceholder : DSH_WORKSPACE_COPY.browserUrlPlaceholder;
+\t\t\t\tbrowserGo.disabled = !browserEnabled || urlInput.value.trim() === "";
+\t\t\t\tbrowserGo.title = browserEnabled ? "" : capabilities.embeddedBrowser.reason;
 \t\t\t\tconst composerElementReady = dshWorkspaceComposerReady("browser-element");
 \t\t\t\tconst composerErrorsReady = dshWorkspaceComposerReady("console-errors");
 \t\t\t\tconst unsentErrors = consoleErrors.filter((entry) => entry.sent !== true).length;
 \t\t\t\tsendElementLabel.textContent = pickedElements.length > 0
 \t\t\t\t\t? DSH_WORKSPACE_COPY.browserSendElement + " (" + pickedElements.length + ")"
-\t\t\t\t\t: DSH_WORKSPACE_COPY.browserSendElement;
+\t\t\t\t\t: DSH_WORKSPACE_COPY.browserPickElement;
 \t\t\t\tsendErrorsLabel.textContent = DSH_WORKSPACE_COPY.browserConsoleErrors + " (" + unsentErrors + ")";
 \t\t\t\t/* 能力探测先行：缺能力或缺 composer 桥直接 disabled 并写明原因，不假装可用。 */
-\t\t\t\tsendElement.disabled = !browserEnabled || !composerElementReady || pickedElements.length === 0;
+\t\t\t\tsendElement.disabled = !browserEnabled || (pickedElements.length > 0 && !composerElementReady);
 \t\t\t\tsendErrors.disabled = !browserEnabled || !composerErrorsReady || unsentErrors === 0;
 \t\t\t\tsendElement.title = browserEnabled
-\t\t\t\t\t? (composerElementReady ? "" : DSH_WORKSPACE_COPY.disabledNoComposerBridge)
+\t\t\t\t\t? (pickedElements.length > 0 && !composerElementReady ? DSH_WORKSPACE_COPY.disabledNoComposerBridge : DSH_WORKSPACE_COPY.browserPickedReady)
 \t\t\t\t\t: capabilities.embeddedBrowser.reason;
 \t\t\t\tsendErrors.title = browserEnabled
 \t\t\t\t\t? (composerErrorsReady ? "" : DSH_WORKSPACE_COPY.disabledNoComposerBridge)
 \t\t\t\t\t: capabilities.embeddedBrowser.reason;
 \t\t\t\tstage.dataset.dshBrowserReserved = browserEnabled ? "false" : "true";
+\t\t\t\tbrowserEmpty.hidden = browserEnabled;
 \t\t\t\t/* 能力可用时不显示内部原因串，避免把 capability 这种标记漏给用户看。 */
 \t\t\t\tbrowserReason.textContent = browserEnabled ? "" : capabilities.embeddedBrowser.reason;
+\t\t\t\tterminalInput.disabled = capabilities.terminal.enabled !== true;
+\t\t\t\tterminalInput.title = capabilities.terminal.enabled === true ? "" : capabilities.terminal.reason;
+\t\t\t\tterminalRun.disabled = capabilities.terminal.enabled !== true || terminalInput.value.trim() === "" || terminalRequests.size > 0;
+\t\t\t\tterminalRun.title = capabilities.terminal.enabled === true ? "" : capabilities.terminal.reason;
 \t\t\t};
 
 \t\t\tconst render = (reason) => {
@@ -932,13 +1087,94 @@ ${WORKSPACE_LOGIC_SOURCE}
 \t\t\t};
 \t\t\twindow.addEventListener(DSH_BROWSER_CONSOLE_ERRORS_EVENT, onConsoleErrors);
 
+\t\t\tconst onBrowserState = (event) => {
+\t\t\t\tconst detail = event?.detail;
+\t\t\t\tif (detail === null || typeof detail !== "object") return;
+\t\t\t\tbrowserState = {
+\t\t\t\t\turl: typeof detail.url === "string" ? detail.url : "",
+\t\t\t\t\ttitle: typeof detail.title === "string" ? detail.title : "",
+\t\t\t\t\tcanGoBack: detail.canGoBack === true,
+\t\t\t\t\tcanGoForward: detail.canGoForward === true,
+\t\t\t\t\tphase: typeof detail.phase === "string" ? detail.phase : "idle"
+\t\t\t\t};
+\t\t\t\tif (doc.activeElement !== urlInput && browserState.url !== "") urlInput.value = browserState.url;
+\t\t\t\tsyncToolbars();
+\t\t\t};
+\t\t\twindow.addEventListener(DSH_BROWSER_STATE_EVENT, onBrowserState);
+
+\t\t\tconst navigateBrowser = () => {
+\t\t\t\tconst url = urlInput.value.trim();
+\t\t\t\tif (url === "" || capabilities.embeddedBrowser.enabled !== true) return;
+\t\t\t\tbrowserState = { ...browserState, url, phase: "loading" };
+\t\t\t\tdshWorkspacePostMessage({ type: DSH_EMBEDDED_BROWSER_NAVIGATE_TYPE, url });
+\t\t\t\tsyncToolbars();
+\t\t\t};
+\t\t\tbrowserGo.addEventListener("click", navigateBrowser);
+\t\t\turlInput.addEventListener("input", syncToolbars);
+\t\t\turlInput.addEventListener("keydown", (event) => {
+\t\t\t\tif (event.key !== "Enter") return;
+\t\t\t\tevent.preventDefault();
+\t\t\t\tnavigateBrowser();
+\t\t\t});
+\t\t\tfor (const button of navButtons) {
+\t\t\t\tbutton.addEventListener("click", () => {
+\t\t\t\t\tif (button.disabled || capabilities.embeddedBrowser.enabled !== true) return;
+\t\t\t\t\tdshWorkspacePostMessage({ type: DSH_EMBEDDED_BROWSER_HISTORY_TYPE, action: button.dataset.dshBrowserNav });
+\t\t\t\t});
+\t\t\t}
+
+\t\t\tconst appendTerminalLog = (text, kind) => {
+\t\t\t\tif (terminalLog.dataset.empty === "true") {
+\t\t\t\t\tterminalLog.textContent = "";
+\t\t\t\t\tterminalLog.dataset.empty = "false";
+\t\t\t\t}
+\t\t\t\tconst prefix = kind === "command" ? "> " : kind === "error" ? "! " : "";
+\t\t\t\tterminalLog.textContent += (terminalLog.textContent === "" ? "" : "\\n") + prefix + String(text ?? "");
+\t\t\t\tterminalLog.scrollTop = terminalLog.scrollHeight;
+\t\t\t};
+\t\t\tconst runTerminalCommand = () => {
+\t\t\t\tconst command = terminalInput.value.trim();
+\t\t\t\tif (command === "" || capabilities.terminal.enabled !== true || terminalRequests.size > 0) return;
+\t\t\t\tconst id = "dsh-terminal-" + Date.now().toString(36) + "-" + (terminalSeq++).toString(36);
+\t\t\t\tterminalRequests.set(id, { command, startedAt: Date.now() });
+\t\t\t\tappendTerminalLog(command, "command");
+\t\t\t\tterminalInput.value = "";
+\t\t\t\tdshWorkspacePostMessage({ type: DSH_TERMINAL_RUN_TYPE, id, command });
+\t\t\t\tsyncToolbars();
+\t\t\t};
+\t\t\tterminalRun.addEventListener("click", runTerminalCommand);
+\t\t\tterminalInput.addEventListener("input", syncToolbars);
+\t\t\tterminalInput.addEventListener("keydown", (event) => {
+\t\t\t\tif (event.key !== "Enter") return;
+\t\t\t\tevent.preventDefault();
+\t\t\t\trunTerminalCommand();
+\t\t\t});
+\t\t\tconst onChromeMessage = (event) => {
+\t\t\t\tconst data = event?.data;
+\t\t\t\tif (data === null || typeof data !== "object" || data.type !== DSH_TERMINAL_RESPONSE_TYPE) return;
+\t\t\t\tif (!terminalRequests.has(data.id)) return;
+\t\t\t\tterminalRequests.delete(data.id);
+\t\t\t\tif (data.ok === true && data.result !== null && typeof data.result === "object") {
+\t\t\t\t\tif (typeof data.result.stdout === "string" && data.result.stdout !== "") appendTerminalLog(data.result.stdout.trimEnd(), "output");
+\t\t\t\t\tif (typeof data.result.stderr === "string" && data.result.stderr !== "") appendTerminalLog(data.result.stderr.trimEnd(), "error");
+\t\t\t\t\tappendTerminalLog(DSH_WORKSPACE_COPY.terminalExit + " " + String(data.result.exitCode ?? "?"), "output");
+\t\t\t\t} else {
+\t\t\t\t\tappendTerminalLog(String(data.error || "终端命令失败"), "error");
+\t\t\t\t}
+\t\t\t\tsyncToolbars();
+\t\t\t};
+\t\t\twindow.chrome?.webview?.addEventListener?.("message", onChromeMessage);
+
 \t\t\t/* R4 D3：composer 接好后只唤醒一次重算，不把事件当成可用性真相。 */
 \t\t\tconst onComposerReady = () => syncToolbars();
 \t\t\twindow.addEventListener(DSH_COMPOSER_READY_EVENT, onComposerReady);
 
 \t\t\tsendElement.addEventListener("click", () => {
 \t\t\t\tconst payload = pickedElements[pickedElements.length - 1];
-\t\t\t\tif (payload === undefined) return;
+\t\t\t\tif (payload === undefined) {
+\t\t\t\t\tdshWorkspacePostMessage({ type: DSH_EMBEDDED_BROWSER_PICK_TYPE });
+\t\t\t\t\treturn;
+\t\t\t\t}
 \t\t\t\t/* 不写 textarea，只派发事件（P15-7）。 */
 \t\t\t\twindow.dispatchEvent(new CustomEvent(DSH_COMPOSER_EVENTS["browser-element"], { detail: payload }));
 \t\t\t\tpickedElements.length = 0;
@@ -969,7 +1205,9 @@ ${WORKSPACE_LOGIC_SOURCE}
 \t\t\t\twindow.removeEventListener(DSH_DESKTOP_READY_EVENT, onDesktopReady);
 \t\t\t\twindow.removeEventListener(DSH_BROWSER_ELEMENT_PICKED_EVENT, onElementPicked);
 \t\t\t\twindow.removeEventListener(DSH_BROWSER_CONSOLE_ERRORS_EVENT, onConsoleErrors);
+\t\t\t\twindow.removeEventListener(DSH_BROWSER_STATE_EVENT, onBrowserState);
 \t\t\t\twindow.removeEventListener(DSH_COMPOSER_READY_EVENT, onComposerReady);
+\t\t\t\twindow.chrome?.webview?.removeEventListener?.("message", onChromeMessage);
 \t\t\t\ttoolbarObserver?.disconnect();
 \t\t\t\tif (boundsFrame !== 0) window.cancelAnimationFrame(boundsFrame);
 \t\t\t\tshell.remove();

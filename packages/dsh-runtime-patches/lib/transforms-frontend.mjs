@@ -523,6 +523,7 @@ const SELECTION_ANNOTATION_RUNTIME_SOURCE = `
 			let pendingSubmitSignature = null;
 			let activeAnnotationSessionId = null;
 			const DSH_ANNOTATION_STORAGE_PREFIX = "__dsh_selection_annotations:";
+			const DSH_WORKSPACE_CONTEXT_STORAGE_PREFIX = "__dsh_workspace_context:";
 			const DSH_LEGACY_ANNOTATION_STORAGE_KEY = DSH_ANNOTATION_STORAGE_PREFIX + location.pathname + location.search;
 			const DSH_COMPOSER_CONTEXT_EVENTS = {
 				"browser-element": "dsh:composer:add-browser-element",
@@ -544,6 +545,9 @@ const SELECTION_ANNOTATION_RUNTIME_SOURCE = `
 			function dshAnnotationStorageKey(sessionId = activeAnnotationSessionId ?? dshCurrentSessionId()) {
 				return DSH_ANNOTATION_STORAGE_PREFIX + encodeURIComponent(sessionId);
 			}
+			function dshWorkspaceContextStorageKey(sessionId = activeAnnotationSessionId ?? dshCurrentSessionId()) {
+				return DSH_WORKSPACE_CONTEXT_STORAGE_PREFIX + encodeURIComponent(sessionId);
+			}
 			function dshCssEscape(value) {
 				if (typeof CSS !== "undefined" && typeof CSS.escape === "function") return CSS.escape(value);
 				return String(value).replace(/["\\\\]/g, "\\$&");
@@ -559,6 +563,17 @@ const SELECTION_ANNOTATION_RUNTIME_SOURCE = `
 						sourceKey: typeof item.sourceKey === "string" && item.sourceKey !== "" ? item.sourceKey : null,
 						sourceKind: typeof item.sourceKind === "string" && item.sourceKind !== "" ? item.sourceKind : null
 					}));
+				} catch {
+					return [];
+				}
+			}
+			function dshNormalizeStoredWorkspaceContext(raw) {
+				try {
+					const parsed = JSON.parse(raw ?? "[]");
+					if (!Array.isArray(parsed)) return [];
+					return parsed
+						.map((item) => dshJsonSafe(item))
+						.filter((item) => item !== null && typeof item === "object" && !Array.isArray(item));
 				} catch {
 					return [];
 				}
@@ -619,6 +634,14 @@ const SELECTION_ANNOTATION_RUNTIME_SOURCE = `
 					pendingAnnotations = [];
 				}
 			}
+			function dshLoadWorkspaceContext(sessionId = activeAnnotationSessionId ?? dshCurrentSessionId()) {
+				const key = dshWorkspaceContextStorageKey(sessionId);
+				try {
+					pendingWorkspaceContextItems = dshNormalizeStoredWorkspaceContext(sessionStorage.getItem(key));
+				} catch {
+					pendingWorkspaceContextItems = [];
+				}
+			}
 			function dshPersistAnnotations() {
 				try {
 					const key = dshAnnotationStorageKey();
@@ -629,15 +652,24 @@ const SELECTION_ANNOTATION_RUNTIME_SOURCE = `
 					else sessionStorage.setItem(key, JSON.stringify(pendingAnnotations));
 				} catch {}
 			}
+			function dshPersistWorkspaceContext() {
+				try {
+					const key = dshWorkspaceContextStorageKey();
+					if (pendingWorkspaceContextItems.length === 0) sessionStorage.removeItem(key);
+					else sessionStorage.setItem(key, JSON.stringify(pendingWorkspaceContextItems));
+				} catch {}
+			}
 			function dshSyncAnnotationSession() {
 				const nextSessionId = dshCurrentSessionId();
 				if (activeAnnotationSessionId === null) {
 					activeAnnotationSessionId = nextSessionId;
 					dshLoadAnnotations();
+					dshLoadWorkspaceContext();
 					return false;
 				}
 				if (nextSessionId === activeAnnotationSessionId) return false;
 				dshPersistAnnotations();
+				dshPersistWorkspaceContext();
 				activeAnnotationSessionId = nextSessionId;
 				pendingAnnotations = [];
 				pendingWorkspaceContextItems = [];
@@ -646,6 +678,7 @@ const SELECTION_ANNOTATION_RUNTIME_SOURCE = `
 				dshHideAnnotationPreview();
 				dshHideSelectionUi();
 				dshLoadAnnotations();
+				dshLoadWorkspaceContext();
 				return true;
 			}
 			function dshClearSelectionMarkers() {
@@ -784,6 +817,7 @@ const SELECTION_ANNOTATION_RUNTIME_SOURCE = `
 			function dshRemoveWorkspaceContext(index) {
 				if (index < 0 || index >= pendingWorkspaceContextItems.length) return;
 				pendingWorkspaceContextItems.splice(index, 1);
+				dshPersistWorkspaceContext();
 				dshRenderComposerChip();
 				dshSyncAnnotationSubmitState();
 			}
@@ -1302,6 +1336,7 @@ const SELECTION_ANNOTATION_RUNTIME_SOURCE = `
 						pendingWorkspaceContextItems = [];
 						pendingSubmitSignature = null;
 						dshPersistAnnotations();
+						dshPersistWorkspaceContext();
 						dshClearSelectionMarkers();
 						dshRenderComposerChip();
 						dshHideAnnotationPreview();
@@ -1374,6 +1409,7 @@ const SELECTION_ANNOTATION_RUNTIME_SOURCE = `
 						pendingWorkspaceContextItems = [];
 						pendingSubmitSignature = null;
 						dshPersistAnnotations();
+						dshPersistWorkspaceContext();
 						dshClearSelectionMarkers();
 						dshRenderComposerChip();
 						dshHideAnnotationPreview();
@@ -1505,12 +1541,15 @@ const SELECTION_ANNOTATION_RUNTIME_SOURCE = `
 				}, 0);
 			}
 			dshLoadAnnotations();
+			dshLoadWorkspaceContext();
 			window.__dshComposerAccepts = (kind) => Object.prototype.hasOwnProperty.call(DSH_COMPOSER_CONTEXT_EVENTS, kind) && dshVisibleTextarea() !== null;
 			for (const [kind, eventName] of Object.entries(DSH_COMPOSER_CONTEXT_EVENTS)) {
 				window.addEventListener(eventName, (event) => {
+					dshSyncAnnotationSession();
 					const item = dshNormalizeComposerContextItem(kind, event?.detail);
 					if (item === null) return;
 					pendingWorkspaceContextItems.push(item);
+					dshPersistWorkspaceContext();
 					dshRenderComposerChip();
 					dshSyncAnnotationSubmitState();
 				});

@@ -50,6 +50,7 @@ export interface CatalogSnapshotModel {
   modelUid: string;
   label?: string;
   disabled?: boolean;
+  capability?: CapabilityEvidence;
 }
 
 export interface CatalogSnapshot {
@@ -160,7 +161,7 @@ export class ManualApiKeyEntry {
 }
 
 export class DynamicModelCatalog {
-  constructor(options?: { source?: CatalogSource; capabilityResolver?: CapabilityResolver; clock?: () => Date | string });
+  constructor(options?: { source?: CatalogSource; capabilityResolver?: CapabilityResolver; clock?: () => Date | string; fallbackModels?: CatalogSnapshotModel[] });
   refresh(input: { apiKey: string; signal?: AbortSignal }): Promise<ModelRecord[]>;
   get(modelUid: string): ModelRecord | undefined;
   list(): ModelRecord[];

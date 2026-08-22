@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { createWindsurfPiProvider, isWindsurfCloudCallableModel, isWindsurfVisionTool, mapWindsurfContext, normalizeWindsurfToolDescription, parseWindsurfCatalogModelConfig, resetWindsurfRuntimeCaches } from "../src/pi-provider.js";
+import { WINDSURF_SAFE_MAX_OUTPUT_TOKENS, createWindsurfPiProvider, isWindsurfCloudCallableModel, isWindsurfVisionTool, mapWindsurfContext, mergeWindsurfCatalogModels, normalizeWindsurfMaxOutputTokens, normalizeWindsurfToolDescription, parseWindsurfCatalogModelConfig, resetWindsurfRuntimeCaches } from "../src/pi-provider.js";
 
 test("Windsurf 工具说明把负一哨兵改成云端可接受的等义文字", () => {
   assert.equal(
@@ -147,6 +147,75 @@ test("Windsurf 目录把编码档位作为只读展示元数据，不伪造成�
   assert.equal(high.stardustVariantEffort, "high");
   assert.equal(high.reasoning, false);
   assert.deepEqual(high.stardustReasoningEfforts, []);
+});
+
+test("文档兜底目录包含 Gemini Flash、Claude 4.6 与 GPT-5.2 等关键 WSF 型号", () => {
+  resetWindsurfRuntimeCaches();
+  const ids = createWindsurfPiProvider().getModels().map(model => model.id);
+  for (const id of [
+    "MODEL_GOOGLE_GEMINI_3_0_FLASH_MEDIUM",
+    "gemini-3-6-flash-high",
+    "claude-opus-4-6-1m",
+    "claude-opus-4-6-thinking",
+    "claude-opus-4-6-thinking-1m",
+    "MODEL_CLAUDE_4_5_OPUS",
+    "MODEL_CLAUDE_4_5_OPUS_THINKING",
+    "MODEL_GPT_5_2_NONE",
+    "MODEL_GPT_5_2_LOW_PRIORITY",
+    "MODEL_GPT_5_2_HIGH",
+    "MODEL_GPT_5_2_XHIGH_PRIORITY",
+    "swe-1-7-lightning-medium"
+  ]) {
+    assert.ok(ids.includes(id), id);
+  }
+});
+
+test("Windsurf 上下文窗口和单次输出上限分离，避免把 128K 当 maxOutputTokens 发给上游", () => {
+  resetWindsurfRuntimeCaches();
+  const provider = createWindsurfPiProvider();
+  const opus = provider.getModels().find(model => model.id === "claude-opus-4-6");
+  const opusThinking1m = provider.getModels().find(model => model.id === "claude-opus-4-6-thinking-1m");
+
+  assert.equal(opus.contextWindow, 200_000);
+  assert.equal(opus.maxTokens, WINDSURF_SAFE_MAX_OUTPUT_TOKENS);
+  assert.equal(opusThinking1m.contextWindow, 1_000_000);
+  assert.equal(opusThinking1m.maxTokens, WINDSURF_SAFE_MAX_OUTPUT_TOKENS);
+  assert.equal(normalizeWindsurfMaxOutputTokens(128_000), WINDSURF_SAFE_MAX_OUTPUT_TOKENS);
+  assert.equal(normalizeWindsurfMaxOutputTokens(456), 456);
+  assert.equal(normalizeWindsurfMaxOutputTokens(undefined), WINDSURF_SAFE_MAX_OUTPUT_TOKENS);
+});
+
+test("实时目录与文档兜底合并，同 ID 实时目录优先", () => {
+  const merged = mergeWindsurfCatalogModels([
+    { id: "swe-1-6", name: "SWE-1.6 Live", contextWindow: 123, maxTokens: 456 },
+    { id: "custom-live", name: "Custom Live", contextWindow: 789, maxTokens: 111 }
+  ]);
+  const ids = merged.map(model => model.id);
+  assert.ok(ids.includes("MODEL_GOOGLE_GEMINI_3_0_FLASH_MEDIUM"));
+  assert.ok(ids.includes("claude-opus-4-6-thinking-1m"));
+  assert.ok(ids.includes("custom-live"));
+  assert.equal(merged.find(model => model.id === "swe-1-6").name, "SWE-1.6 Live");
+  assert.equal(merged.find(model => model.id === "swe-1-6").contextWindow, 123);
+});
+
+test("实时目录禁用标记不清空官方文档兜底模型", () => {
+  const merged = mergeWindsurfCatalogModels([
+    { id: "swe-1-6-slow", name: "SWE-1.6 Slow", contextWindow: 200_000, maxTokens: 8192 }
+  ], {
+    disabledModelIds: [
+      "claude-opus-4-6",
+      "claude-opus-4-6-thinking-1m",
+      "MODEL_GOOGLE_GEMINI_3_0_FLASH_MEDIUM",
+      "MODEL_GPT_5_2_XHIGH_PRIORITY"
+    ]
+  });
+  const ids = merged.map(model => model.id);
+
+  assert.ok(ids.includes("swe-1-6-slow"));
+  assert.ok(ids.includes("claude-opus-4-6"));
+  assert.ok(ids.includes("claude-opus-4-6-thinking-1m"));
+  assert.ok(ids.includes("MODEL_GOOGLE_GEMINI_3_0_FLASH_MEDIUM"));
+  assert.ok(ids.includes("MODEL_GPT_5_2_XHIGH_PRIORITY"));
 });
 
 test("实时目录的 Devin Local-only 元数据和已确认不支持直连的家族不会进入云端调用链", () => {

@@ -9,9 +9,8 @@
  * 诚实边界（能力探测先行，不靠调用失败才降级）：
  *   - 后端适配器缺席时，五个能力位（tree/read/write/search/watch）全部 false，
  *     界面显示禁用占位并写明原因，绝不用假数据冒充可用。
- *   - 本轮 write 是**正式关闭**的（{@link DSH_FILE_WRITE_ENABLED}），即使适配器
- *     自称支持写入也一律按 false 处理：Codex 尚未开放写入边界，编辑器只做
- *     「可编辑 + 明确告知不可保存」，不做假保存。
+ *   - write 只在桌面壳提供 `writeFile` 真实适配器时放行；截断窗口、二进制文件
+ *     或后端能力缺席时仍禁用保存，避免把半个文件写回磁盘。
  *
  * 渲染层：优先复用官方 `ReadBlock` / `MarkdownText`（见 `installDshFileViewer`
  * 内的能力探测），拿不到 React 时退回结构同构的原生 DOM 行，两种渲染器共用同一
@@ -31,11 +30,10 @@ export const DSH_FILE_CAPABILITY_KEYS = ["tree", "read", "write", "search", "wat
 /**
  * 本轮写入总开关。
  *
- * Codex 未开放文件写入边界，所以这里是**硬 false**：适配器即使声明
- * `write: true` 也会被降级，保存按钮永远 disabled。将来后端就绪时，改这一个
- * 常量即可放行，不需要动界面代码。
+ * 桌面壳已经开放受控写入适配器：前端仍只承认真实 `writeFile` 函数，并在渲染层
+ * 禁止截断窗口保存。
  */
-export const DSH_FILE_WRITE_ENABLED = false;
+export const DSH_FILE_WRITE_ENABLED = true;
 
 /** 单次读取窗口上限：行数与字节数同时受限，谁先到算谁。 */
 export const DSH_FILE_READ_MAX_LINES = 500;
@@ -167,7 +165,10 @@ export const DSH_FILE_VIEWER_COPY = {
   reasonNoAdapter: "未检测到工作区文件后端（window." + DSH_FILE_ADAPTER_KEY + " 缺席），本轮只显示占位",
   reasonNoTree: "后端未开放目录列举能力",
   reasonNoRead: "后端未开放文件读取能力",
-  reasonNoWrite: "本轮不接文件写入：Codex 尚未开放写入边界，编辑内容不会落盘",
+  reasonNoWrite: "桌面壳未开放文件写入能力，编辑内容不会落盘",
+  reasonTruncatedNoWrite: "当前只读取了文件的一段，为避免覆盖未加载内容，截断窗口不能保存",
+  saveFailed: "保存失败",
+  saveOk: "已保存到磁盘",
   reasonNoSearch: "后端未开放文件搜索能力，已退回「过滤已加载文件」",
   reasonNoWatch: "后端未开放文件变更订阅，内容可能已过期",
   reasonNoComposer: "对话输入框尚未接好（缺少 composer 事件监听器）",
@@ -413,6 +414,56 @@ export function dshNormalizeReadResult(result, request) {
 export function dshLinesToText(lines) {
   if (!Array.isArray(lines)) return "";
   return lines.map((line) => (typeof line?.text === "string" ? line.text : "")).join("\n");
+}
+
+/** 选区匹配用的轻量规范化：真实 UI 里换行、连续空格、NBSP 都不该影响定位。 */
+export function dshSelectionSearchText(value) {
+  return String(value ?? "").replace(/\u00a0/gu, " ").replace(/\s+/gu, " ").trim();
+}
+
+/** Markdown 预览会去掉标题符、反引号等装饰；这里只做保守脱壳，避免把源码语义改掉。 */
+export function dshMarkdownPreviewLineText(text) {
+  const tick = String.fromCharCode(96);
+  return String(text ?? "")
+    .replace(/!\[([^\]]*)\]\([^)]+\)/gu, "$1")
+    .replace(/\[([^\]]+)\]\([^)]+\)/gu, "$1")
+    .replace(new RegExp(tick + "([^" + tick + "]+)" + tick, "gu"), "$1")
+    .replace(/^(\s{0,3})(#{1,6}\s+|[-*+]\s+|>\s?|\d+\.\s+)/u, "$1")
+    .replace(/\*\*([^*]+)\*\*/gu, "$1")
+    .replace(/__([^_]+)__/gu, "$1")
+    .replace(/\*([^*]+)\*/gu, "$1")
+    .replace(/_([^_]+)_/gu, "$1")
+    .replace(/~~([^~]+)~~/gu, "$1")
+    .replace(/<[^>]+>/gu, "");
+}
+
+/** Markdown 预览 DOM 没有源码行号时，用可见文本回到原始行号。 */
+export function dshLineRangeFromPreviewSelection(lines, selectedText) {
+  if (!Array.isArray(lines)) return null;
+  const target = dshSelectionSearchText(selectedText);
+  if (target === "") return null;
+  const normalized = lines.map((line) => ({
+    number: Number.isInteger(line?.number) && line.number > 0 ? line.number : null,
+    text: dshSelectionSearchText(dshMarkdownPreviewLineText(line?.text))
+  }));
+  for (const line of normalized) {
+    if (line.text.includes(target) && Number.isInteger(line.number) && line.number > 0) {
+      return { startLine: line.number, endLine: line.number };
+    }
+  }
+  for (let start = 0; start < normalized.length; start += 1) {
+    let combined = "";
+    for (let end = start; end < normalized.length; end += 1) {
+      combined = dshSelectionSearchText((combined === "" ? "" : combined + " ") + normalized[end].text);
+      if (combined.includes(target)) {
+        const startLine = normalized[start].number;
+        const endLine = normalized[end].number ?? startLine;
+        if (Number.isInteger(startLine) && startLine > 0) return { startLine, endLine: Math.max(startLine, endLine ?? startLine) };
+      }
+      if (combined.length > target.length + 512) break;
+    }
+  }
+  return null;
 }
 
 /**
@@ -747,6 +798,9 @@ const DSH_FILE_VIEWER_LOGIC_SOURCE = [
   dshApproximateByteLength,
   dshNormalizeReadResult,
   dshLinesToText,
+  dshSelectionSearchText,
+  dshMarkdownPreviewLineText,
+  dshLineRangeFromPreviewSelection,
   dshFileContentHash,
   dshFormatLineRange,
   dshFormatBytes,
@@ -912,6 +966,7 @@ ${DSH_FILE_VIEWER_LOGIC_SOURCE}
 \t\t\t\tread: null,
 \t\t\t\treadError: null,
 \t\t\t\treading: false,
+\t\t\t\tsaving: false,
 \t\t\t\tmode: "code",
 \t\t\t\tdraftText: null,
 \t\t\t\tdirty: false,
@@ -1264,10 +1319,10 @@ ${DSH_FILE_VIEWER_LOGIC_SOURCE}
 \t\t\t\t}
 \t\t\t\trevertButton.hidden = state.mode !== "edit";
 \t\t\t\tsaveButton.hidden = state.mode !== "edit";
-\t\t\t\trevertButton.disabled = !state.dirty;
-\t\t\t\t/* 本轮 write 是正式关闭的边界：按钮永远 disabled 并写明原因，不做假保存。 */
-\t\t\t\tsaveButton.disabled = state.caps.write.enabled !== true || !state.dirty;
-\t\t\t\tsaveButton.title = state.caps.write.reason;
+\t\t\t\trevertButton.disabled = !state.dirty || state.saving;
+\t\t\t\tconst saveBlockedByTruncation = state.read !== null && state.read.truncated === true;
+\t\t\t\tsaveButton.disabled = state.caps.write.enabled !== true || !state.dirty || state.saving || saveBlockedByTruncation;
+\t\t\t\tsaveButton.title = saveBlockedByTruncation ? DSH_FILE_VIEWER_COPY.reasonTruncatedNoWrite : state.caps.write.reason;
 \t\t\t\tif (state.dirty) saveButton.textContent = DSH_FILE_VIEWER_COPY.saveLabel + "（" + DSH_FILE_VIEWER_COPY.dirtyBadge + "）";
 \t\t\t\telse saveButton.textContent = DSH_FILE_VIEWER_COPY.saveLabel;
 
@@ -1442,6 +1497,31 @@ ${DSH_FILE_VIEWER_LOGIC_SOURCE}
 \t\t\t\trenderBody();
 \t\t\t\trenderChrome();
 \t\t\t});
+\t\t\tsaveButton.addEventListener("click", () => {
+\t\t\t\tif (saveButton.disabled || state.currentPath === null || state.read === null) return;
+\t\t\t\tconst adapter = dshFvAdapter();
+\t\t\t\tif (adapter === null || typeof adapter.writeFile !== "function") return;
+\t\t\t\tconst text = state.draftText ?? dshLinesToText(state.read.lines);
+\t\t\t\tstate.saving = true;
+\t\t\t\tstate.notice = "";
+\t\t\t\trenderChrome();
+\t\t\t\tPromise.resolve(adapter.writeFile(state.currentPath, text, { revision: state.read.revision ?? null }))
+\t\t\t\t\t.then(() => {
+\t\t\t\t\t\tstate.dirty = false;
+\t\t\t\t\t\tstate.draftText = null;
+\t\t\t\t\t\tstate.notice = DSH_FILE_VIEWER_COPY.saveOk;
+\t\t\t\t\t\tlastPlainKey = null;
+\t\t\t\t\t\topenFile(state.currentPath, state.read.startLine, false);
+\t\t\t\t\t})
+\t\t\t\t\t.catch((error) => {
+\t\t\t\t\t\tstate.notice = DSH_FILE_VIEWER_COPY.saveFailed + "：" + dshFvErrorText(error);
+\t\t\t\t\t\trender();
+\t\t\t\t\t})
+\t\t\t\t\t.finally(() => {
+\t\t\t\t\t\tstate.saving = false;
+\t\t\t\t\t\trenderChrome();
+\t\t\t\t\t});
+\t\t\t});
 \t\t\tprevButton.addEventListener("click", () => {
 \t\t\t\tif (state.read === null) return;
 \t\t\t\topenFile(state.currentPath, Math.max(1, state.read.startLine - DSH_FILE_READ_MAX_LINES), state.currentBinary);
@@ -1511,8 +1591,13 @@ ${DSH_FILE_VIEWER_LOGIC_SOURCE}
 \t\t\t\t\trenderChrome();
 \t\t\t\t\treturn;
 \t\t\t\t}
-\t\t\t\tconst startLine = dshLineNumberFromDomNode(range.startContainer, bodyBox);
-\t\t\t\tconst endLine = dshLineNumberFromDomNode(range.endContainer, bodyBox);
+\t\t\t\tlet startLine = dshLineNumberFromDomNode(range.startContainer, bodyBox);
+\t\t\t\tlet endLine = dshLineNumberFromDomNode(range.endContainer, bodyBox);
+\t\t\t\tif ((startLine === null || startLine === undefined) && state.mode === "preview") {
+\t\t\t\t\tconst previewRange = dshLineRangeFromPreviewSelection(state.read.lines, text);
+\t\t\t\t\tstartLine = previewRange?.startLine ?? null;
+\t\t\t\t\tendLine = previewRange?.endLine ?? startLine;
+\t\t\t\t}
 \t\t\t\tstate.selection = { text, startLine, endLine: endLine ?? startLine };
 \t\t\t\trenderChrome();
 \t\t\t};
@@ -1521,8 +1606,11 @@ ${DSH_FILE_VIEWER_LOGIC_SOURCE}
 \t\t\t/* 能力可能晚到：桌面壳就绪、composer 接好之后都重新探测一次。 */
 \t\t\tconst reprobe = () => {
 \t\t\t\tconst before = JSON.stringify(dshFileCapabilityFlags(state.caps));
-\t\t\t\tstate.caps = dshResolveFileCapabilities(dshFvAdapter());
-\t\t\t\tif (JSON.stringify(dshFileCapabilityFlags(state.caps)) !== before) {
+\t\t\t\tconst beforeRoot = state.rootPath;
+\t\t\t\tconst nextAdapter = dshFvAdapter();
+\t\t\t\tconst nextRoot = dshResolveFileCapabilities(nextAdapter).rootPath;
+\t\t\t\tstate.caps = dshResolveFileCapabilities(nextAdapter);
+\t\t\t\tif (JSON.stringify(dshFileCapabilityFlags(state.caps)) !== before || nextRoot !== beforeRoot) {
 \t\t\t\t\tlastPlainKey = null;
 \t\t\t\t\tbootstrap();
 \t\t\t\t}

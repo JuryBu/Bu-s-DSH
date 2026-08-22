@@ -9,6 +9,7 @@ import { isWindsurfImageAttachmentModel } from "./capabilities.js";
 const PROVIDER_ID = "windsurf";
 const DEFAULT_HOST = "https://server.codeium.com";
 const CATALOG_TTL_MS = 5 * 60_000;
+export const WINDSURF_SAFE_MAX_OUTPUT_TOKENS = 8_192;
 
 const familyMetadata = [
   ["claude-5-fable", 1_000_000, 128_000],
@@ -44,6 +45,11 @@ const familyMetadata = [
   ["MODEL_GPT_5_2", 384_000, 128_000]
 ];
 
+export function normalizeWindsurfMaxOutputTokens(value) {
+  if (!Number.isSafeInteger(value) || value <= 0) return WINDSURF_SAFE_MAX_OUTPUT_TOKENS;
+  return Math.min(value, WINDSURF_SAFE_MAX_OUTPUT_TOKENS);
+}
+
 const directCascadeUnsupportedFamilies = [
   "gpt-5-6-sol",
   "gpt-5-6-terra",
@@ -51,11 +57,43 @@ const directCascadeUnsupportedFamilies = [
 ];
 
 const fallbackModels = [
+  ["claude-5-fable-high", "Claude Fable 5 High"],
+  ["claude-opus-5-high", "Claude Opus 5 High"],
   ["claude-opus-4-8-high", "Claude Opus 4.8 High"],
+  ["claude-opus-4-7-high", "Claude Opus 4.7 High"],
+  ["claude-opus-4-6", "Claude Opus 4.6"],
+  ["claude-opus-4-6-1m", "Claude Opus 4.6 1M"],
+  ["claude-opus-4-6-thinking", "Claude Opus 4.6 Thinking"],
+  ["claude-opus-4-6-thinking-1m", "Claude Opus 4.6 Thinking 1M"],
+  ["MODEL_CLAUDE_4_5_OPUS", "Claude Opus 4.5"],
+  ["MODEL_CLAUDE_4_5_OPUS_THINKING", "Claude Opus 4.5 Thinking"],
+  ["MODEL_CLAUDE_4_SONNET", "Claude Sonnet 4"],
+  ["MODEL_CLAUDE_4_SONNET_THINKING", "Claude Sonnet 4 Thinking"],
+  ["claude-sonnet-4-6", "Claude Sonnet 4.6"],
   ["glm-5-2-max", "GLM-5.2 Max"],
   ["kimi-k2-7-max", "Kimi K2.7 Max"],
   ["gemini-3-1-pro-high", "Gemini 3.1 Pro High"],
-  ["swe-1-7", "SWE-1.7"]
+  ["MODEL_GOOGLE_GEMINI_3_0_FLASH_HIGH", "Gemini 3 Flash High"],
+  ["MODEL_GOOGLE_GEMINI_3_0_FLASH_MEDIUM", "Gemini 3 Flash Medium"],
+  ["MODEL_GOOGLE_GEMINI_3_0_FLASH_LOW", "Gemini 3 Flash Low"],
+  ["MODEL_GOOGLE_GEMINI_3_0_FLASH_MINIMAL", "Gemini 3 Flash Minimal"],
+  ["gemini-3-6-flash-high", "Gemini 3.6 Flash High"],
+  ["MODEL_GOOGLE_GEMINI_2_5_PRO", "Gemini 2.5 Pro"],
+  ["MODEL_GPT_5_2_NONE", "GPT-5.2 No Thinking"],
+  ["MODEL_GPT_5_2_NONE_PRIORITY", "GPT-5.2 No Thinking Fast"],
+  ["MODEL_GPT_5_2_LOW", "GPT-5.2 Low Thinking"],
+  ["MODEL_GPT_5_2_LOW_PRIORITY", "GPT-5.2 Low Thinking Fast"],
+  ["MODEL_GPT_5_2_MEDIUM", "GPT-5.2 Medium Thinking"],
+  ["MODEL_GPT_5_2_MEDIUM_PRIORITY", "GPT-5.2 Medium Thinking Fast"],
+  ["MODEL_GPT_5_2_HIGH", "GPT-5.2 High Thinking"],
+  ["MODEL_GPT_5_2_HIGH_PRIORITY", "GPT-5.2 High Thinking Fast"],
+  ["MODEL_GPT_5_2_XHIGH", "GPT-5.2 XHigh Thinking"],
+  ["MODEL_GPT_5_2_XHIGH_PRIORITY", "GPT-5.2 XHigh Priority"],
+  ["swe-1-7-lightning-medium", "SWE-1.7 Lightning Medium"],
+  ["swe-1-7", "SWE-1.7"],
+  ["swe-1-6", "SWE-1.6"],
+  ["deepseek-v4-flash", "DeepSeek V4 Flash"],
+  ["deepseek-v4-pro", "DeepSeek V4 Pro"]
 ];
 
 const visionToolNames = new Set(["read_image", "view_image", "inspect_image"]);
@@ -167,10 +205,11 @@ export function isWindsurfCloudCallableModel(model) {
 }
 
 function piModel(modelUid, label, capability = {}) {
-  const [, fallbackContextWindow, maxTokens] = metadataFor(modelUid);
+  const [, fallbackContextWindow, fallbackMaxTokens] = metadataFor(modelUid);
   const contextWindow = Number.isSafeInteger(capability.contextWindowTokens) && capability.contextWindowTokens > 0
     ? capability.contextWindowTokens
     : fallbackContextWindow;
+  const maxTokens = normalizeWindsurfMaxOutputTokens(fallbackMaxTokens);
   const stardustVariantEffort = variantReasoningEffort(modelUid, label);
   return {
     id: modelUid,
@@ -188,7 +227,37 @@ function piModel(modelUid, label, capability = {}) {
   };
 }
 
-let models = fallbackModels.map(([id, name]) => piModel(id, name));
+function fallbackModelObjects() {
+  return fallbackModels.map(([id, name]) => piModel(id, name));
+}
+
+export function windsurfFallbackCatalogModels() {
+  return fallbackModelObjects().map((model) => ({
+    modelUid: model.id,
+    label: model.name,
+    disabled: false,
+    capability: {
+      authority: "realtime",
+      contextWindowTokens: model.contextWindow,
+      supportsVision: Array.isArray(model.input) && model.input.includes("image"),
+      reasoningLevels: model.stardustVariantEffort ? [model.stardustVariantEffort] : []
+    }
+  }));
+}
+
+export function mergeWindsurfCatalogModels(liveModels, { disabledModelIds = [] } = {}) {
+  const merged = new Map();
+  for (const model of fallbackModelObjects()) {
+    merged.set(model.id, model);
+  }
+  for (const model of Array.isArray(liveModels) ? liveModels : []) merged.set(model.id, {
+    ...model,
+    maxTokens: normalizeWindsurfMaxOutputTokens(model.maxTokens)
+  });
+  return [...merged.values()].sort((left, right) => left.name.localeCompare(right.name, "zh-CN"));
+}
+
+let models = mergeWindsurfCatalogModels([]);
 let catalogCache;
 
 async function fetchCatalog(apiKey, host, signal) {
@@ -212,15 +281,17 @@ async function fetchCatalog(apiKey, host, signal) {
   if (!response.ok) throw new Error(`Windsurf 模型目录请求失败：HTTP ${response.status}`);
   const buffer = Buffer.from(await response.arrayBuffer());
   const next = [];
+  const disabledModelIds = [];
   for (const field of upstream.iterFields(buffer)) {
     if (field.num !== 1 || field.wire !== 2 || !Buffer.isBuffer(field.value)) continue;
     const model = parseWindsurfCatalogModelConfig(field.value, upstream.iterFields);
+    if (model.modelUid && model.disabled === true) disabledModelIds.push(model.modelUid);
     if (model.modelUid && isWindsurfCloudCallableModel(model)) next.push(piModel(model.modelUid, model.label, model.capability));
   }
   if (next.length === 0) throw new Error("Windsurf 没有返回当前账号可用的目标模型");
-  next.sort((left, right) => left.name.localeCompare(right.name, "zh-CN"));
-  catalogCache = { key: cacheKey, fetchedAt: Date.now(), models: next };
-  return next;
+  const merged = mergeWindsurfCatalogModels(next, { disabledModelIds });
+  catalogCache = { key: cacheKey, fetchedAt: Date.now(), models: merged };
+  return merged;
 }
 
 function mapContent(content) {
@@ -302,6 +373,7 @@ function streamWindsurf(model, context, options = {}) {
       if (!options.apiKey) throw new Error("尚未配置 Windsurf OAuth 或 API Key");
       const upstream = await loadWindsurfUpstream();
       const mapped = mapWindsurfContext(context, model);
+      const maxOutputTokens = normalizeWindsurfMaxOutputTokens(options.maxTokens ?? model.maxTokens);
       stream.push({ type: "start", partial: output });
       for await (const event of upstream.streamChatEvents({
         apiKey: options.apiKey,
@@ -310,7 +382,7 @@ function streamWindsurf(model, context, options = {}) {
         messages: mapped.messages,
         tools: mapped.tools.length ? mapped.tools : undefined,
         signal: options.signal,
-        completionOpts: { maxOutputTokens: options.maxTokens }
+        completionOpts: { maxOutputTokens }
       })) {
         if (event.kind === "text") {
           if (thinkingIndex >= 0) {
@@ -398,5 +470,5 @@ export function createWindsurfPiProvider({ apiKeyAuth = windsurfApiKeyAuth, read
 
 export function resetWindsurfRuntimeCaches() {
   catalogCache = undefined;
-  models = fallbackModels.map(([id, name]) => piModel(id, name));
+  models = mergeWindsurfCatalogModels([]);
 }

@@ -3,6 +3,7 @@ import { DynamicModelCatalog } from "./catalog.js";
 import { describeCredential } from "./credentials.js";
 import { ProviderBoundaryError, safeErrorCode, toBoundaryError } from "./errors.js";
 import { ExperimentalFeatureGate } from "./feature-gate.js";
+import { windsurfFallbackCatalogModels } from "./pi-provider.js";
 import { adaptNativeStream } from "./stream.js";
 
 const defaultCredentialId = "experimental-windsurf-devin-provider";
@@ -93,7 +94,7 @@ export class ExperimentalWindsurfDevinProvider {
     this.#credentialStore = credentialStore;
     this.#credentialIds = resolveCredentialIds(credentialId, credentialIds);
     this.#authenticationMode = normalizeAuthenticationMode(authenticationMode);
-    this.#catalog = new DynamicModelCatalog({ source: catalogSource, capabilityResolver, clock });
+    this.#catalog = new DynamicModelCatalog({ source: catalogSource, capabilityResolver, clock, fallbackModels: windsurfFallbackCatalogModels() });
     this.#transport = transport;
     this.#clock = clock;
     this.browserOAuth = new BrowserOAuthEntry({

@@ -214,6 +214,33 @@ test("目录能力必须同时经过 Windsurf 图片附件模型表，能力未�
   assert.deepEqual(provider.listModels(), []);
 });
 
+test("稀疏实时目录不会覆盖文档兜底模型", async () => {
+  const store = new InMemoryFakeCredentialStore();
+  const catalog = fakeCatalog([
+    { modelUid: "swe-1-6", label: "SWE-1.6", disabled: false }
+  ]);
+  const provider = createExperimentalWindsurfDevinProvider({
+    featureGate: enabledGate(),
+    credentialStore: store,
+    authenticationMode: "manual_api_key",
+    catalogSource: catalog.source,
+    clock: fixedClock
+  });
+
+  await provider.manualApiKey.save({ apiKey: "fake-sparse-catalog-key" });
+  await provider.refreshModels();
+  const ids = provider.listModels().map((model) => model.modelUid);
+  for (const id of [
+    "swe-1-6",
+    "MODEL_GOOGLE_GEMINI_3_0_FLASH_MEDIUM",
+    "claude-opus-4-6-thinking-1m",
+    "MODEL_GPT_5_2_XHIGH_PRIORITY",
+    "swe-1-7-lightning-medium"
+  ]) {
+    assert.ok(ids.includes(id), id);
+  }
+});
+
 test("每次流调用都重新解析凭据并显式传给 transport", async () => {
   const store = new InMemoryFakeCredentialStore();
   const catalog = fakeCatalog();

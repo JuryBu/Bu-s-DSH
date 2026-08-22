@@ -75,14 +75,16 @@ export class DynamicModelCatalog {
   #source;
   #capabilityResolver;
   #clock;
+  #fallbackModels;
   #records = new Map();
   #generation = 0;
   #lastRefreshAt = null;
 
-  constructor({ source, capabilityResolver, clock = () => new Date() } = {}) {
+  constructor({ source, capabilityResolver, clock = () => new Date(), fallbackModels = [] } = {}) {
     this.#source = source;
     this.#capabilityResolver = capabilityResolver;
     this.#clock = clock;
+    this.#fallbackModels = Array.isArray(fallbackModels) ? fallbackModels : [];
   }
 
   async refresh({ apiKey, signal } = {}) {
@@ -104,18 +106,38 @@ export class DynamicModelCatalog {
       ? snapshot.source
       : "injected_catalog_source";
     const records = new Map();
+    const liveModelIds = new Set();
+    const mergedModels = new Map();
 
     for (const model of snapshot.models) {
       const modelUid = requireModelString(model?.modelUid, "invalid_model_uid");
-      if (records.has(modelUid)) {
+      if (liveModelIds.has(modelUid)) {
         throw new ProviderBoundaryError("duplicate_model_uid");
       }
+      liveModelIds.add(modelUid);
+    }
+
+    for (const model of this.#fallbackModels) {
+      const modelUid = requireModelString(model?.modelUid, "invalid_model_uid");
+      if (!mergedModels.has(modelUid)) {
+        mergedModels.set(modelUid, model);
+      }
+    }
+
+    for (const model of snapshot.models) {
+      const modelUid = model.modelUid;
+      const fallback = mergedModels.get(modelUid);
+      mergedModels.set(modelUid, fallback ? { ...fallback, ...model, capability: model.capability ?? fallback.capability } : model);
+    }
+
+    for (const model of mergedModels.values()) {
+      const modelUid = requireModelString(model?.modelUid, "invalid_model_uid");
 
       const label = typeof model.label === "string" && model.label.length > 0 ? model.label : modelUid;
       const resolvedCapability = this.#capabilityResolver && typeof this.#capabilityResolver.resolve === "function"
         ? await this.#capabilityResolver.resolve({ modelUid, label, catalogSource, catalogObservedAt, signal })
         : undefined;
-      const capability = normalizeCapabilityEvidence(resolvedCapability, catalogObservedAt, modelUid);
+      const capability = normalizeCapabilityEvidence(resolvedCapability ?? model.capability, catalogObservedAt, modelUid);
 
       records.set(modelUid, {
         modelUid,

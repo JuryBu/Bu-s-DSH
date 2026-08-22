@@ -356,10 +356,11 @@ test("字节标签走真实换算，不吞小数", () => {
 
 /* ==================== 未接后端的能力必须显式禁用 ==================== */
 
-test("保存到后端的按钮是禁用态并写明原因，不假装可用", () => {
-  assert.ok(DSH_APPEARANCE_RUNTIME_SOURCE.includes("disabled: true"));
-  assert.ok(DSH_APPEARANCE_RUNTIME_SOURCE.includes("backend-appearance-settings"));
-  assert.ok(DSH_AP_COPY.saveDisabledReason.includes("尚未接入"));
+test("保存到 DSH 设置按钮使用本地持久层并给出结果提示", () => {
+  assert.ok(DSH_APPEARANCE_RUNTIME_SOURCE.includes("function dshApSaveConfig()"));
+  assert.ok(DSH_APPEARANCE_RUNTIME_SOURCE.includes("onClick: () => api.save()"));
+  assert.ok(DSH_APPEARANCE_RUNTIME_SOURCE.includes("save: () => dshApSaveConfig()"));
+  assert.ok(DSH_AP_COPY.saveOk.includes("已保存"));
 });
 
 test("草稿只写一个小 JSON key，图片本体走 IndexedDB", () => {

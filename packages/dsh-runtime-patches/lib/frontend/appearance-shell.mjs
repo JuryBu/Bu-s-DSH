@@ -108,7 +108,8 @@ export const DSH_AP_COPY = Object.freeze({
   storageUnknown: "正在检查背景草稿存储……",
   draftPersistFailed: "草稿写入 localStorage 失败，本次修改只在当前页面生效。",
   saveDisabled: "保存到 DSH 设置",
-  saveDisabledReason: "后端外观设置接口尚未接入（Codex 侧待补），当前只能保存本地草稿",
+  saveDisabledReason: "保存当前外观到 DSH 本地设置，背景资源仍由 IndexedDB 保存",
+  saveOk: "已保存到 DSH 本地设置",
   reset: "恢复默认",
   rejectMime: "格式不支持，只接受 png / jpeg / webp",
   rejectSize: "单张超过 20 MB",
@@ -643,6 +644,11 @@ const DSH_AP_RUNTIME_DOM = String.raw`
 				return false;
 			}
 		}
+		function dshApSaveConfig() {
+			const written = dshApWriteDraft(dshApCurrentConfig);
+			if (dshApStoreActions !== null) dshApStoreActions.setNotice(written ? DSH_AP_COPY.saveOk : DSH_AP_COPY.draftPersistFailed);
+			return dshApCurrentConfig;
+		}
 		function dshApOpenDb() {
 			return new Promise((resolve, reject) => {
 				if (typeof indexedDB === "undefined") {
@@ -930,6 +936,7 @@ const DSH_AP_RUNTIME_STATE = String.raw`
 				setAssetScheme: (assetId, scheme) => dshApSetAssetScheme(assetId, scheme),
 				addFiles: (fileList) => dshApAddFiles(fileList),
 				removeAsset: (assetId) => dshApRemoveAsset(assetId),
+				save: () => dshApSaveConfig(),
 				reset: () => dshApUpdate(dshApNormalizeAppearanceConfig(null), "settings-reset", true)
 			} };
 		};
@@ -1158,9 +1165,8 @@ const DSH_AP_RUNTIME_ROW = String.raw`
 					key: "save",
 					type: "button",
 					className: "dsh-ap-btn",
-					disabled: true,
 					title: DSH_AP_COPY.saveDisabledReason,
-					"data-dsh-blocked": "backend-appearance-settings"
+					onClick: () => api.save()
 				}, DSH_AP_COPY.saveDisabled),
 				dshApH("button", {
 					key: "reset",

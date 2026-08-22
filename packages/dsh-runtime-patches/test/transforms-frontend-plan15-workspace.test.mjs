@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 import {
   DSH_BROWSER_CONSOLE_ERRORS_EVENT,
@@ -14,6 +15,8 @@ import {
   DSH_EMBEDDED_BROWSER_BOUNDS_EVENT,
   DSH_EMBEDDED_BROWSER_MESSAGE_TYPE,
   DSH_WORKSPACE_DEFAULT_WIDTH,
+  DSH_WORKSPACE_APPEARANCE_LEGACY_LOCAL_KEY,
+  DSH_WORKSPACE_LEGACY_LOCAL_KEY,
   DSH_WORKSPACE_LOCAL_KEY,
   DSH_WORKSPACE_MAX_WIDTH_PX,
   DSH_WORKSPACE_MIN_WIDTH,
@@ -30,6 +33,9 @@ import {
   patchWorkspaceShellSource,
 } from "../lib/frontend/workspace-panel.mjs";
 import { patchConversationUiSource } from "../lib/transforms.mjs";
+
+const PACKAGE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const WORKSPACE_ROOT = path.resolve(PACKAGE_ROOT, "..", "..");
 
 /** 干净锚点基线；缺失时跳过依赖 release 的用例，不让没装 DSH 的环境直接失败。 */
 const BASELINE = "C:/Users/Stardust/AppData/Local/DeepSeekHarness/app/releases/0.1.0-rc.6-oauth/node_modules/@deepseek-ai";
@@ -77,10 +83,13 @@ test("宽度默认 440、下限 360、上限 min(55vw, 720px)", () => {
   assert.equal(dshClampWorkspaceWidth("440", 1920), 440);
 });
 
-/* ==================== 本地状态：写 .local，不写 .draft ==================== */
+/* ==================== 本地状态：写 workspace key，不碰 appearance ==================== */
 
-test("持久化 key 是 dsh.appearance.v1.local，不是外观草稿", () => {
-  assert.equal(DSH_WORKSPACE_LOCAL_KEY, "dsh.appearance.v1.local");
+test("持久化 key 是 workspace 专属 key，旧 appearance local 只读迁移", () => {
+  assert.equal(DSH_WORKSPACE_LOCAL_KEY, "dsh.rightWorkspace.view.v1");
+  assert.equal(DSH_WORKSPACE_LEGACY_LOCAL_KEY, "dsh.workspace.view.v5");
+  assert.equal(DSH_WORKSPACE_APPEARANCE_LEGACY_LOCAL_KEY, "dsh.appearance.v1.local");
+  assert.ok(!DSH_WORKSPACE_LOCAL_KEY.startsWith("dsh.appearance."));
   assert.ok(!DSH_WORKSPACE_LOCAL_KEY.endsWith(".draft"));
 });
 
@@ -102,10 +111,18 @@ test("readWorkspaceLocalState 形状不符一律回落默认值", () => {
   });
 });
 
-test("写回 local 时保留同 key 下 W1/W2 的其它字段", () => {
-  const raw = JSON.stringify({ appearance: { mode: "glass" }, workspace: { open: false, activeTab: "files", width: 440 } });
+test("写回 workspace local 时只保留右侧工作区片段", () => {
+  const raw = JSON.stringify({
+    groupBy: "workspace",
+    orderBy: "updated",
+    appearance: { mode: "glass" },
+    workspace: { open: false, activeTab: "files", width: 440 },
+  });
   const next = JSON.parse(dshWriteWorkspaceLocalState(raw, { open: true, activeTab: "terminal", width: 480 }));
-  assert.deepEqual(next.appearance, { mode: "glass" });
+  assert.deepEqual(Object.keys(next), ["workspace"]);
+  assert.equal("groupBy" in next, false);
+  assert.equal("orderBy" in next, false);
+  assert.equal("appearance" in next, false);
   assert.deepEqual(next.workspace, { open: true, activeTab: "terminal", width: 480 });
   /* 原始内容损坏时只重建 workspace，不抛错。 */
   assert.deepEqual(JSON.parse(dshWriteWorkspaceLocalState("not-json", { open: true, activeTab: "x", width: 1 })).workspace, {
@@ -266,8 +283,21 @@ test("R4 D8：compact tree 阈值 420，样式与 render 都按同一个属性�
   assert.equal(DSH_WORKSPACE_COMPACT_TREE_WIDTH, 420);
   assert.ok(DSH_WORKSPACE_SHELL_STYLE.includes("--dsh-workspace-tree-width:clamp(128px, 34%, 168px)"));
   assert.ok(DSH_WORKSPACE_SHELL_STYLE.includes('#dsh-workspace-shell[data-dsh-compact-tree="true"] .dsh-ws-tree{display:none}'));
+  assert.ok(DSH_WORKSPACE_SHELL_STYLE.includes('#dsh-workspace-shell[data-dsh-workspace-tab="browser"] .dsh-ws-tree,#dsh-workspace-shell[data-dsh-workspace-tab="terminal"] .dsh-ws-tree{display:none}'));
+  assert.ok(DSH_WORKSPACE_SHELL_STYLE.includes('.dsh-browser-stage[data-dsh-browser-reserved="false"] .dsh-ws-empty{display:none}'));
   const patched = patchWorkspaceShellSource(APPLY_STUB);
   assert.ok(patched.includes('shell.dataset.dshCompactTree = state.width < DSH_WORKSPACE_COMPACT_TREE_WIDTH ? "true" : "false";'));
+  assert.ok(patched.includes("dshWorkspacePruneLegacyLocalRaw"));
+  assert.ok(patched.includes("function dshWorkspaceExtractRaw(raw)"));
+  assert.ok(patched.includes("dshWriteWorkspaceLocalState(null, parsed.workspace)"));
+  assert.ok(patched.includes("dshWriteWorkspaceLocalState(null, workspace)"));
+  assert.equal(patched.includes("dshWriteWorkspaceLocalState(dshWorkspaceReadLocalRaw(), workspace)"), false);
+  assert.ok(patched.includes("const storedRaw = dshWorkspaceReadLocalRaw();"));
+  assert.ok(patched.includes("if (storedRaw !== null)"));
+  assert.ok(patched.includes("dshWorkspaceWriteLocalRaw(stored);"));
+  assert.ok(patched.includes("DSH_WORKSPACE_APPEARANCE_LEGACY_LOCAL_KEY"));
+  assert.ok(patched.includes("browserEmpty.hidden = browserEnabled;"));
+  assert.ok(patched.includes("browserUrlReadyPlaceholder"));
   /* R4 D1/D9：让位开关与 toggle 三条定位规则不得写死消失。 */
   assert.ok(patched.includes('html.dataset.dshWorkspaceReflow = "body-padding"'));
   assert.ok(DSH_WORKSPACE_SHELL_STYLE.includes('html[data-dsh-workspace-reflow="body-padding"] body[data-dsh-workspace-open="true"]{padding-inline-end:var(--dsh-workspace-width)}'));
@@ -284,6 +314,42 @@ test("composer 事件名按 kind 拆开，禁止复用 add-text", () => {
     "file-selection": "dsh:composer:add-file-selection",
   });
   assert.equal(Object.values(DSH_COMPOSER_EVENTS).includes("dsh:composer:add-text"), false);
+});
+
+test("composer workspace context 与注释一样按会话草稿保存，切会话不丢也不串", () => {
+  const source = readFileSync(
+    path.join(PACKAGE_ROOT, "lib", "transforms-frontend.mjs"),
+    "utf8",
+  );
+  assert.ok(source.includes('const DSH_WORKSPACE_CONTEXT_STORAGE_PREFIX = "__dsh_workspace_context:";'));
+  assert.ok(source.includes("function dshWorkspaceContextStorageKey("));
+  assert.ok(source.includes("function dshLoadWorkspaceContext("));
+  assert.ok(source.includes("function dshPersistWorkspaceContext()"));
+  assert.ok(source.includes("dshPersistWorkspaceContext();\n\t\t\t\tactiveAnnotationSessionId = nextSessionId;"));
+  assert.ok(source.includes("dshLoadAnnotations();\n\t\t\t\tdshLoadWorkspaceContext();"));
+  assert.ok(source.includes("pendingWorkspaceContextItems.push(item);\n\t\t\t\t\tdshPersistWorkspaceContext();"));
+  assert.ok(source.includes("pendingWorkspaceContextItems = [];\n\t\t\t\t\t\tpendingSubmitSignature = null;\n\t\t\t\t\t\tdshPersistAnnotations();\n\t\t\t\t\t\tdshPersistWorkspaceContext();"));
+});
+
+test("桌面终端禁用 PowerShell 进度流，并在输出边界清洗 CLIXML", () => {
+  const source = readFileSync(path.join(WORKSPACE_ROOT, "apps", "desktop-shell", "Program.cs"), "utf8");
+  assert.ok(source.includes("$ProgressPreference='SilentlyContinue';"));
+  assert.ok(source.includes("private static string StripPowerShellCliXml(string value)"));
+  assert.ok(source.includes("private static string StripPowerShellBootstrap(string value)"));
+  assert.ok(source.includes("private static bool IsPowerShellCliXmlLine(string trimmed)"));
+  assert.ok(source.includes("private static void AppendPowerShellCliXmlStringNodes"));
+  assert.ok(source.includes("private static string ExtractPowerShellCliXmlStringNodes(string value)"));
+  assert.match(source, /var extracted = ExtractPowerShellCliXmlStringNodes\(normalized\);[\s\S]*?var lines = normalized\.Split\('\\n'\);/);
+  assert.ok(source.includes("private static string DecodePowerShellCliXmlText"));
+  assert.ok(source.includes("WebUtility.HtmlDecode"));
+  assert.ok(source.includes("_x([0-9A-Fa-f]{4})_"));
+  assert.match(source, /return StripPowerShellBootstrap\(value\);/);
+  assert.match(source, /return StripPowerShellBootstrap\(extracted\);/);
+  assert.match(source, /return StripPowerShellBootstrap\(builder\.ToString\(\)\);/);
+  assert.ok(source.includes('@"O\\s*u\\s*t\\s*p\\s*u\\s*t\\s*E\\s*n\\s*c\\s*o\\s*d\\s*i\\s*n\\s*g"'));
+  assert.ok(source.includes("Regex.Replace(value, pattern, string.Empty, RegexOptions.CultureInvariant).TrimStart()"));
+  assert.ok(source.includes("stdout = stdoutText"));
+  assert.ok(source.includes("stderr = stderrText"));
 });
 
 /* ==================== 样式硬要求（P15-6.1 沙盘踩过的坑） ==================== */
