@@ -405,13 +405,13 @@ body[data-dsh-workspace-open="true"] #dsh-workspace-shell{display:flex}
 html[data-dsh-desktop-titlebar="custom"] #dsh-workspace-shell{top:var(--dsh-desktop-titlebar-height)}
 html[data-dsh-workspace-reflow="body-padding"] body[data-dsh-workspace-open="true"]{padding-inline-end:var(--dsh-workspace-width)}
 html[data-dsh-desktop-titlebar="custom"] body{padding-top:var(--dsh-desktop-titlebar-height)}
-#dsh-workspace-toggle{position:fixed;top:10px;right:12px;z-index:41;display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 10px;border:1px solid var(--dsh-workspace-border);border-radius:8px;background:var(--dsh-workspace-bg);color:var(--dsh-workspace-muted);font-size:12px;line-height:26px;white-space:nowrap;cursor:pointer}
+#dsh-workspace-toggle{position:fixed;top:48px;right:12px;z-index:41;display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 10px;border:1px solid var(--dsh-workspace-border);border-radius:8px;background:var(--dsh-workspace-bg);color:var(--dsh-workspace-muted);font-size:12px;line-height:26px;white-space:nowrap;cursor:pointer}
 /* inline SVG 不设尺寸时默认 300x150，会把同一 flex 行里的文字挤成竖排——实测踩过。 */
 #dsh-workspace-shell svg,#dsh-workspace-toggle svg,#dsh-desktop-titlebar svg{flex:0 0 auto;width:12px;height:12px}
 #dsh-workspace-toggle:hover{background:var(--dsh-workspace-hover);color:var(--dsh-workspace-fg)}
 #dsh-workspace-toggle[aria-pressed="true"]{color:var(--dsh-workspace-fg);border-color:var(--dsh-workspace-accent)}
-html[data-dsh-desktop-titlebar="custom"] #dsh-workspace-toggle{top:calc(var(--dsh-desktop-titlebar-height) + 10px)}
-body[data-dsh-workspace-open="true"] #dsh-workspace-toggle{right:calc(var(--dsh-workspace-width) + 12px)}
+html[data-dsh-desktop-titlebar="custom"] #dsh-workspace-toggle{top:calc(var(--dsh-desktop-titlebar-height) + 48px)}
+body[data-dsh-workspace-open="true"] #dsh-workspace-toggle{display:none}
 .dsh-ws-resize{position:absolute;top:0;left:-3px;bottom:0;width:6px;cursor:col-resize;background:transparent;border:0;padding:0}
 .dsh-ws-resize:hover,.dsh-ws-resize:focus-visible{background:var(--dsh-workspace-accent);opacity:.35;outline:none}
 .dsh-ws-nav{display:flex;align-items:center;gap:2px;flex:0 0 auto;padding:6px 8px;border-bottom:1px solid var(--dsh-workspace-border)}

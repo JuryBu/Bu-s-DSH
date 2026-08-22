@@ -301,9 +301,9 @@ test("R4 D8：compact tree 阈值 420，样式与 render 都按同一个属性�
   /* R4 D1/D9：让位开关与 toggle 三条定位规则不得写死消失。 */
   assert.ok(patched.includes('html.dataset.dshWorkspaceReflow = "body-padding"'));
   assert.ok(DSH_WORKSPACE_SHELL_STYLE.includes('html[data-dsh-workspace-reflow="body-padding"] body[data-dsh-workspace-open="true"]{padding-inline-end:var(--dsh-workspace-width)}'));
-  assert.ok(DSH_WORKSPACE_SHELL_STYLE.includes("#dsh-workspace-toggle{position:fixed;top:10px;right:12px"));
-  assert.ok(DSH_WORKSPACE_SHELL_STYLE.includes('html[data-dsh-desktop-titlebar="custom"] #dsh-workspace-toggle{top:calc(var(--dsh-desktop-titlebar-height) + 10px)}'));
-  assert.ok(DSH_WORKSPACE_SHELL_STYLE.includes('body[data-dsh-workspace-open="true"] #dsh-workspace-toggle{right:calc(var(--dsh-workspace-width) + 12px)}'));
+  assert.ok(DSH_WORKSPACE_SHELL_STYLE.includes("#dsh-workspace-toggle{position:fixed;top:48px;right:12px"));
+  assert.ok(DSH_WORKSPACE_SHELL_STYLE.includes('html[data-dsh-desktop-titlebar="custom"] #dsh-workspace-toggle{top:calc(var(--dsh-desktop-titlebar-height) + 48px)}'));
+  assert.ok(DSH_WORKSPACE_SHELL_STYLE.includes('body[data-dsh-workspace-open="true"] #dsh-workspace-toggle{display:none}'));
 });
 
 test("composer 事件名按 kind 拆开，禁止复用 add-text", () => {
